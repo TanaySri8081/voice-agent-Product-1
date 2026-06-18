@@ -1,0 +1,75 @@
+INFO:livekit.agents:starting worker
+INFO:livekit.agents:plugin registered
+INFO:livekit.agents:plugin registered
+INFO:livekit.agents:plugin registered
+INFO:livekit.agents:plugin registered
+INFO:livekit.agents:plugin registered
+ERROR:livekit.agents:worker failed
+Traceback (most recent call last):
+  File "C:\Users\nirav\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\site-packages\livekit\agents\cli\cli.py", line 1603, in _worker_run
+    await server.run(devmode=args.devmode, unregistered=jupyter)
+  File "C:\Users\nirav\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\site-packages\livekit\agents\worker.py", line 732, in run
+    await self._http_server.start()
+  File "C:\Users\nirav\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\site-packages\livekit\agents\utils\http_server.py", line 29, in start
+    await site.start()
+  File "C:\Users\nirav\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\site-packages\aiohttp\web_runner.py", line 138, in start
+    self._server = await loop.create_server(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\base_events.py", line 1536, in create_server
+    raise OSError(err.errno, msg) from None
+OSError: [Errno 10048] error while attempting to bind on address ('::', 8081, 0, 0): only one usage of each socket address (protocol/network address/port) is normally permitted
+INFO:livekit.agents:draining worker
+INFO:livekit.agents:shutting down worker
++--------------------- Traceback (most recent call last) ---------------------+
+| C:\Users\nirav\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_ |
+| qbz5n2kfra8p0\LocalCache\local-packages\Python311\site-packages\livekit\age |
+| nts\cli\cli.py:1775 in start                                                |
+|                                                                             |
+|   1772         if drain_timeout is not None:                                |
+|   1773             server.update_options(drain_timeout=drain_timeout)       |
+|   1774                                                                      |
+| > 1775         _run_worker(                                                 |
+|   1776             server=server,                                           |
+|   1777             args=proto.CliArgs(                                      |
+|   1778                 log_level=log_level.value,                           |
+|                                                                             |
+| C:\Users\nirav\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_ |
+| qbz5n2kfra8p0\LocalCache\local-packages\Python311\site-packages\livekit\age |
+| nts\cli\cli.py:1630 in _run_worker                                          |
+|                                                                             |
+|   1627                 except asyncio.TimeoutError:                         |
+|   1628                     logger.warning("drain timed out, forcing         |
+|        shutdown")                                                           |
+|   1629                                                                      |
+| > 1630             loop.run_until_complete(server.aclose())                 |
+|   1631                                                                      |
+|   1632             if watch_client:                                         |
+|   1633                 loop.run_until_complete(watch_client.aclose())       |
+|                                                                             |
+| C:\Program                                                                  |
+| Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz |
+| 5n2kfra8p0\Lib\asyncio\base_events.py:654 in run_until_complete             |
+|                                                                             |
+|    651         if not future.done():                                        |
+|    652             raise RuntimeError('Event loop stopped before Future     |
+|        completed.')                                                         |
+|    653                                                                      |
+| >  654         return future.result()                                       |
+|    655                                                                      |
+|    656     def stop(self):                                                  |
+|    657         """Stop running the event loop.                              |
+|                                                                             |
+| C:\Users\nirav\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_ |
+| qbz5n2kfra8p0\LocalCache\local-packages\Python311\site-packages\livekit\age |
+| nts\worker.py:965 in aclose                                                 |
+|                                                                             |
+|    962                                                                      |
+|    963             logger.info("shutting down worker", extra={"id":         |
+|        self.id})                                                            |
+|    964                                                                      |
+| >  965             assert self._close_future is not None                    |
+|    966             assert self._http_session is not None                    |
+|    967             assert self._api is not None                             |
+|    968             assert self._http_server is not None                     |
++-----------------------------------------------------------------------------+
+AssertionError
