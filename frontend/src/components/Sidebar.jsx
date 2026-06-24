@@ -11,8 +11,10 @@ import {
   Settings,
   Users,
   X,
+  LogOut,
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
+import { useAuthStore } from "../store/authStore";
 
 const items = [
   { label: "Dashboard", path: "/dashboard", icon: Gauge },
@@ -29,6 +31,13 @@ const items = [
 ];
 
 export default function Sidebar({ open, onClose }) {
+  const logout = useAuthStore((state) => state.logout);
+
+  const handleLogout = () => {
+    logout();
+    onClose?.();
+  };
+
   return (
     <>
       <div
@@ -75,6 +84,13 @@ export default function Sidebar({ open, onClose }) {
               {item.label}
             </NavLink>
           ))}
+          <button
+            onClick={handleLogout}
+            className="flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 hover:text-red-700 transition cursor-pointer"
+          >
+            <LogOut className="h-4 w-4" />
+            Logout
+          </button>
         </nav>
 
         <div className="mt-auto rounded-3xl border border-gray-200 bg-gray-50 p-4">

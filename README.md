@@ -1,110 +1,174 @@
-# LiveKit Vobiz Outbound Agent 📞
+# VoxPilot AI - Multi-Tenant AI Medical Receptionist SaaS 📞🩺
 
-A production-ready voice agent capable of making outbound calls using **LiveKit**, **Deepgram**, and **Groq (Llama 3.3)**.  
-Designed for reliability, speed, and ease of deployment.
-
-## 🚀 Features
-- **Ultra-Fast LLM**: Uses **Groq** running `llama-3.3-70b-versatile` for near-instant responses.
-- **High-Quality Audio**: Uses **Deepgram** for both Speech-to-Text (STT) and Text-to-Speech (TTS).
-- **SIP Trunking**: Integrated with **Vobiz** for PSTN connectivity.
-- **Robust Configuration**: Centralized `config.py` for easy customization of prompts, models, and voices.
+VoxPilot AI is a production-ready, multi-tenant conversational voice agent SaaS designed specifically for medical practices, clinics, hospitals, dentists, and labs. By leveraging advanced Large Language Models (LLMs), Voice Activity Detection (VAD), and low-latency VoIP integrations, VoxPilot AI handles incoming patient calls, schedules appointments, logs patient interactions directly into a CRM, sends pill reminders, and redirects calls to human staff when necessary.
 
 ---
 
-## 🛠️ Setup & Installation
+## 🚀 Key Features
 
-### 1. Prerequisites
-- Python 3.10+ (Recommended: 3.10.13)
-- A [LiveKit Cloud](https://cloud.livekit.io/) account
-- A [Deepgram](https://deepgram.com/) API Key
-- A [Groq](https://groq.com/) API Key
-- A SIP Provider (e.g., Vobiz)
-
-### 2. Clone & Install
-```bash
-# Clone the repository
-git clone <your-repo-url>
-cd LiveKit-Vobiz-Outbound-main
-
-# Create a virtual environment
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-```
-
-### 3. Configure Environment
-Copy the example environment file and fill in your credentials:
-```bash
-cp .env.example .env
-nano .env  # Or open in your editor
-```
-**Required Variables:**
-- `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_SECRET`
-- `DEEPGRAM_API_KEY`
-- `GROQ_API_KEY`
-- `VOBIZ_SIP_*` variables (for outbound calls)
+*   **Multi-Tenant Architecture**: Isolate clinic configurations, patient CRMs, appointment books, call histories, and prompts per tenant.
+*   **Indian Telephony Integration (Vobiz)**: Native integration with Vobiz SIP Trunking and Programmable Voice API for highly cost-effective calling.
+*   **Low-Latency AI Pipeline**: Converts incoming 16-bit linear PCM (`audio/x-l16`) speech stream to text via a customized MiniMax ASR/STT wrapper, processes conversation context using MiniMax LLM, and streams voice replies back via MiniMax TTS.
+*   **Role-Based Access Control (RBAC)**: Protects clinic dashboards and CRM data with secure JWT authentication for Administrators, Doctors, and Receptionists.
+*   **CRM & Appointment Booking**: Dynamic scheduling tools with built-in database indexing, allowing the voice receptionist to check patient history, schedule slots, and update appointments in real-time.
+*   **Automated Patient Care Campaigns**: Periodic cron scheduler for pill refills, patient checks, and appointment reminders.
 
 ---
 
-## 🏃‍♂️ Usage
+## 🏗️ Architecture Design
 
-### 1. Start the Agent
-This runs the agent process which listens for room connections.
-```bash
-python agent.py start
 ```
-
-### 2. Make an Outbound Call
-In a **new terminal window** (ensure `venv` is active), run:
-```bash
-python make_call.py --to +91XXXXXXXXXX
+                     +----------------------------+
+                     |  Patient / Telephone Call   |
+                     +--------------+-------------+
+                                    |
+                                    | SIP / VoIP
+                                    v
+                     +--------------+-------------+
+                     |  Vobiz Voice Gateway       |
+                     +--------------+-------------+
+                                    |
+                                    | WebSocket (Linear L16 PCM)
+                                    v
+                     +--------------+-------------+
+                     |  FastAPI Middleware        |
+                     +--------------+-------------+
+                                    |
+            +-----------------------+-----------------------+
+            |                       |                       |
+            v (Silence/VAD)         v                       v (Text-to-Speech)
+   +--------+--------+     +--------+--------+     +--------+--------+
+   |   MiniMax STT   |     |   MiniMax LLM   |     |   MiniMax TTS   |
+   | (ASR Wrapper)   |     |   (Tool Calls)  |     |   (PCM Stream)  |
+   +--------+--------+     +--------+--------+     +--------+--------+
+            |                       |                       |
+            | Text                  | DB Query / Write      | Audio Chunks
+            +---------------------->+                       +----------> Vobiz
+                                    |
+                                    v
+                           +--------+--------+
+                           |  MongoDB Atlas  |
+                           |  (CRM / Logs)   |
+                           +-----------------+
 ```
-*Note: The number must include the country code (e.g., +1 or +91).*
 
 ---
 
-## 🔧 Troubleshooting Guide
+## 🛠️ Tech Stack
 
-### ❌ Error: `model_decommissioned` (Groq/Llama)
-**Cause:** The configured LLM model is no longer supported by Groq.  
-**Fix:**
-1. Open `config.py`.
-2. Update `GROQ_MODEL` to a supported model (e.g., `llama-3.3-70b-versatile` or `llama-3.1-8b-instant`).
-3. **Restart `agent.py`** to apply changes.
+### Backend
+*   **Python 3.11** & **FastAPI**
+*   **MongoDB & Motor Client** (Asynchronous DB driver)
+*   **Redis & Celery** (Task Queue for campaigns and notifications)
+*   **APScheduler** (Reminders scheduler)
+*   **SlowAPI** (Token bucket rate limiting)
 
-### ❌ Error: `404 Not Found` (SIP Trunk)
-**Cause:** The `SIP_TRUNK_ID` in `.env` is incorrect or doesn't exist in your LiveKit project.  
-**Fix:**
-1. Run `python list_trunks.py` to see available trunks.
-2. If none exist, run `python create_trunk.py` to create one.
-3. Update `.env` with the correct ID.
-
-### ❌ Error: `Address already in use` (Port 8081)
-**Cause:** Another instance of `agent.py` is already running.  
-**Fix:**
-1. Find the process: `lsof -i :8081`
-2. Kill it: `kill -9 <PID>` or `pkill -f "python agent.py"`
-
-### ❌ Error: `No module named 'certifi'` or other imports
-**Cause:** Dependencies are missing.  
-**Fix:**
-1. Ensure your virtual environment is active (`source venv/bin/activate`).
-2. Run `pip install -r requirements.txt`.
-
-### ❌ Call Connects but No Audio
-**Cause:** TTS (Text-to-Speech) failure or WebSocket issues.  
-**Fix:**
-1. Check terminal logs for `APIStatusError`.
-2. If using OpenAI TTS, ensure you have OpenAI credits.
-3. Recommended: Switch to Deepgram TTS (set `TTS_PROVIDER=deepgram` in `.env`).
+### Frontend
+*   **React 19** & **Vite**
+*   **Zustand** (Global state management)
+*   **React Router v7**
+*   **Recharts** (Call analytics visualization)
+*   **Axios** (API client)
 
 ---
 
-## 📂 Project Structure
-- `agent.py`: Main application logic.
-- `config.py`: Central configuration for prompts, models, and constants.
-- `make_call.py`: Script to initiate outbound calls.
-- `create_trunk.py` / `setup_trunk.py`: Utilities for SIP trunk management.
-# LIvekitAIVoice
+## ⚙️ Environment Configuration
+
+Create a `.env` file in the root workspace directory with the following variables:
+
+```env
+# App Configuration
+ENV=development
+SERVER_URL=http://localhost:8000
+JWT_SECRET=super-secret-receptionist-key-change-this-in-production
+
+# Databases
+MONGODB_URL=mongodb://localhost:27017
+DATABASE_NAME=ai_receptionist
+REDIS_URL=redis://localhost:6379/0
+
+# MiniMax Configuration
+MINIMAX_API_KEY=your_minimax_api_key_here
+MINIMAX_GROUP_ID=your_minimax_group_id_here
+MINIMAX_LLM_MODEL=abab6.5g-chat
+MINIMAX_TTS_MODEL=speech-01-turbo
+MINIMAX_TTS_VOICE=male-qn-qingse
+
+# Vobiz Configuration
+VOBIZ_SIP_DOMAIN=your-sip-domain.sip.vobiz.ai
+VOBIZ_USERNAME=your_vobiz_username
+VOBIZ_PASSWORD=your_vobiz_password
+VOBIZ_OUTBOUND_NUMBER=+918045671200
+DEFAULT_TRANSFER_NUMBER=+91XXXXXXXXXX
+```
+
+---
+
+## 🏃‍♂️ Quick Start Setup
+
+### Prerequisites
+*   Docker & Docker Compose installed.
+*   Python 3.10+ (Recommended: 3.11)
+
+### 1. Launch Services (Local Dev Database & Redis)
+Spin up local MongoDB and Redis instances in the background:
+```bash
+docker-compose up -d
+```
+
+### 2. Set Up the Backend
+Create a virtual environment, activate it, and install python dependencies:
+```bash
+# From the root directory
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install requirements
+pip install -r backend/requirements.txt
+
+# Run the FastAPI server
+python backend/app.py
+```
+The backend server will run on `http://localhost:8000`.
+
+### 3. Set Up the Frontend React Dashboard
+Install packages and start the Vite development server:
+```bash
+cd frontend
+npm install
+npm run dev
+```
+Open `http://localhost:5173` in your browser.
+
+---
+
+## 📡 API Documentation Summary
+
+### Authentication & Tenant Setup
+*   `POST /api/auth/register`: Register a new doctor, create their clinic tenant, and generate a secure JWT token.
+*   `POST /api/auth/login`: Authenticate clinic staff and return credentials.
+*   `GET /api/auth/me`: Fetch details of the currently authenticated session.
+
+### Patients & CRM
+*   `GET /api/patients`: Retrieve patients registered under the logged-in doctor's clinic.
+*   `POST /api/patients`: Manually create a new patient record.
+*   `GET /api/patients/{patient_id}`: Read patient demographic and consultation history.
+
+### Scheduling & Settings
+*   `GET /api/appointments`: List scheduled appointments.
+*   `POST /api/appointments`: Book an appointment slot.
+*   `PUT /api/clinics/settings`: Customize AI voice receptionist parameters (prompts, greetings, routing DIDs).
+
+### Calling & Webhooks
+*   `POST /api/calls/twiml/inbound`: Receives inbound Vobiz calls and responds with bidirectional WebSocket Stream XML.
+*   `POST /api/calls/twiml/outbound`: Callback triggered when outbound Vobiz calls are answered.
+*   `POST /api/calls/twiml/transfer`: Generates Dial XML to redirect active calls.
+*   `POST /api/calls/campaigns/trigger`: Dispatches bulk outbound calls natively via Vobiz.
+
+---
+
+## 📈 SaaS Scaling Guide
+
+1.  **Distributed Task Workers**: Move Celery workers to independent server groups (e.g. AWS ECS or Kubernetes pods) to handle automated reminder campaigns for thousands of clinics concurrently.
+2.  **DID Routing Isolation**: Scale the WebSocket servers horizontally and configure the Vobiz webhooks to query tenant DID metadata from a Redis cache layer for sub-millisecond route resolution.
+3.  **Conversational Interruption (Barge-in)**: Vobiz handles user interruption using the `clearAudio` event. If a patient starts speaking while the AI is talking, listen to the STT active state, discard currently queued output on the WebSocket, and prepare an immediate reply.

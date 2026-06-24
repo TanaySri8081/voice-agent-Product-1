@@ -1,11 +1,35 @@
 services:
   voice-agent:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     restart: unless-stopped
     env_file:
       - .env
     ports:
       - "8000:8000"
     volumes:
-      - .:/app # For development/hot-reload (remove in prod)
+      - .:/app
+    depends_on:
+      - mongodb
+      - redis
 
+  mongodb:
+    image: mongo:6.0
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+
+  redis:
+    image: redis:7.0-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  mongodb_data:
+  redis_data:

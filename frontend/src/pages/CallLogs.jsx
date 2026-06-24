@@ -1,27 +1,54 @@
 import { Search, Play, FileText, Download } from "lucide-react";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import axios from "axios";
 import DataTable from "../components/DataTable";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { callLogs } from "../data/mockData";
 
 export default function CallLogs() {
+  const [logs, setLogs] = useState([]);
   const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    axios.get("http://localhost:8002/api/calls/logs")
+      .then(res => {
+        if (res.data && res.data.success && res.data.data.length > 0) {
+          // Map backend keys to table row expectations
+          const formatted = res.data.data.map(log => ({
+            id: log.call_id || log.id,
+            customer: log.caller_name || log.phone,
+            agent: log.direction === "inbound" ? "VoxPilot - Receptionist" : "Outbound Agent",
+            duration: `${Math.floor(log.duration / 60)}m ${log.duration % 60}s`,
+            outcome: log.status,
+            recording: log.recording_url ? "Ready" : "None",
+            transcript: log.transcript && log.transcript.length > 0 ? "Ready" : "None"
+          }));
+          setLogs(formatted);
+        } else {
+          setLogs(callLogs);
+        }
+      })
+      .catch(() => {
+        setLogs(callLogs);
+      });
+  }, []);
+
   const filtered = useMemo(
     () =>
-      callLogs.filter(
+      logs.filter(
         (log) =>
           `${log.customer} ${log.agent} ${log.outcome}`
             .toLowerCase()
             .includes(query.toLowerCase())
       ),
-    [query]
+    [query, logs]
   );
 
   const toneFor = (outcome) => {
-    if (["Converted", "Transferred"].includes(outcome)) return "success";
-    if (["Follow-up", "Interested"].includes(outcome)) return "warning";
-    if (outcome === "No Answer") return "neutral";
+    if (["Converted", "Transferred", "completed", "active"].includes(outcome)) return "success";
+    if (["Follow-up", "Interested", "transferred"].includes(outcome)) return "warning";
+    if (["No Answer", "completed"].includes(outcome)) return "neutral";
     return "danger";
   };
 

@@ -1,24 +1,51 @@
 import { Filter, Search, Upload } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
+import axios from "axios";
 import DataTable from "../components/DataTable";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { contacts } from "../data/mockData";
 
 export default function Contacts() {
+  const [list, setList] = useState([]);
   const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    axios.get("http://localhost:8002/api/patients")
+      .then(res => {
+        if (res.data && res.data.success && res.data.data.length > 0) {
+          // Map backend patient schema keys to table expectations
+          const formatted = res.data.data.map(p => ({
+            id: p.id,
+            name: p.name,
+            phone: p.phone,
+            email: p.email || "N/A",
+            company: p.gender ? `${p.gender}, Age ${p.age || 'N/A'}` : "Patient",
+            lastContacted: p.follow_up_notes || "Never",
+            status: p.history && p.history.length > 0 ? "Qualified" : "Interested"
+          }));
+          setList(formatted);
+        } else {
+          setList(contacts);
+        }
+      })
+      .catch(() => {
+        setList(contacts);
+      });
+  }, []);
+
   const filtered = useMemo(
-    () => contacts.filter((contact) => `${contact.name} ${contact.company} ${contact.email}`.toLowerCase().includes(query.toLowerCase())),
-    [query],
+    () => list.filter((contact) => `${contact.name} ${contact.company} ${contact.email}`.toLowerCase().includes(query.toLowerCase())),
+    [query, list],
   );
 
   const columns = [
     { key: "name", header: "Name" },
     { key: "phone", header: "Phone" },
     { key: "email", header: "Email" },
-    { key: "company", header: "Company" },
-    { key: "lastContacted", header: "Last contacted" },
-    { key: "status", header: "Status", render: (row) => <Badge tone={row.status === "Converted" ? "success" : row.status === "No Answer" ? "neutral" : "warning"}>{row.status}</Badge> },
+    { key: "company", header: "Demographics / Context" },
+    { key: "lastContacted", header: "Follow-up / Notes" },
+    { key: "status", header: "Status", render: (row) => <Badge tone={row.status === "Converted" || row.status === "Qualified" ? "success" : row.status === "No Answer" ? "neutral" : "warning"}>{row.status}</Badge> },
   ];
 
   return (
