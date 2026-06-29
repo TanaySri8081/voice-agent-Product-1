@@ -1,6 +1,6 @@
 import { Search, Play, FileText, Download } from "lucide-react";
 import { useState, useMemo, useEffect } from "react";
-import axios from "axios";
+import api from "../lib/api";
 import DataTable from "../components/DataTable";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -11,7 +11,7 @@ export default function CallLogs() {
   const [query, setQuery] = useState("");
 
   useEffect(() => {
-    axios.get("http://localhost:8002/api/calls/logs")
+    api.get("/calls/logs")
       .then(res => {
         if (res.data && res.data.success && res.data.data.length > 0) {
           // Map backend keys to table row expectations

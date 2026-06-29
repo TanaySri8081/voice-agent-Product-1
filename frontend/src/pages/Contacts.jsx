@@ -1,43 +1,140 @@
-import { Filter, Search, Upload } from "lucide-react";
-import { useMemo, useState, useEffect } from "react";
-import axios from "axios";
+import { Phone, Search, UserPlus } from "lucide-react";
+import { useMemo, useState, useEffect, useCallback } from "react";
+import api from "../lib/api";
 import DataTable from "../components/DataTable";
+import Modal from "../components/Modal";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
-import { contacts } from "../data/mockData";
+import { contacts as mockContacts } from "../data/mockData";
+
+const emptyForm = { name: "", phone: "", email: "", age: "", gender: "", notes: "" };
+
+function extractError(err) {
+  const d = err?.response?.data;
+  if (d) {
+    if (d.message) return d.message;
+    if (typeof d.error === "string" && d.error) return d.error;
+    if (d.detail) {
+      if (Array.isArray(d.detail)) {
+        return d.detail.map((x) => `${x.loc?.[x.loc.length - 1]}: ${x.msg}`).join(", ");
+      }
+      return d.detail;
+    }
+  }
+  if (err?.response?.status === 503) return "Database is not configured on the server.";
+  return "Could not reach the server.";
+}
+
+function formatPatient(p) {
+  return {
+    id: p.id,
+    name: p.name,
+    phone: p.phone,
+    email: p.email || "N/A",
+    company: p.gender ? `${p.gender}, Age ${p.age || "N/A"}` : "Patient",
+    lastContacted: p.follow_up_notes || "Never",
+    status: p.history && p.history.length > 0 ? "Qualified" : "Interested",
+  };
+}
 
 export default function Contacts() {
   const [list, setList] = useState([]);
   const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [live, setLive] = useState(false);
 
-  useEffect(() => {
-    axios.get("http://localhost:8002/api/patients")
-      .then(res => {
-        if (res.data && res.data.success && res.data.data.length > 0) {
-          // Map backend patient schema keys to table expectations
-          const formatted = res.data.data.map(p => ({
-            id: p.id,
-            name: p.name,
-            phone: p.phone,
-            email: p.email || "N/A",
-            company: p.gender ? `${p.gender}, Age ${p.age || 'N/A'}` : "Patient",
-            lastContacted: p.follow_up_notes || "Never",
-            status: p.history && p.history.length > 0 ? "Qualified" : "Interested"
-          }));
-          setList(formatted);
-        } else {
-          setList(contacts);
-        }
-      })
-      .catch(() => {
-        setList(contacts);
-      });
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState(emptyForm);
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState("");
+
+  const [banner, setBanner] = useState(null); // { type: "success" | "error", text }
+  const [callingId, setCallingId] = useState(null);
+
+  const loadContacts = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await api.get("/patients/");
+      if (res.data && res.data.success) {
+        setList((res.data.data || []).map(formatPatient));
+        setLive(true);
+      } else {
+        setList(mockContacts);
+        setLive(false);
+      }
+    } catch {
+      setList(mockContacts);
+      setLive(false);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
+  useEffect(() => {
+    loadContacts();
+  }, [loadContacts]);
+
   const filtered = useMemo(
-    () => list.filter((contact) => `${contact.name} ${contact.company} ${contact.email}`.toLowerCase().includes(query.toLowerCase())),
+    () =>
+      list.filter((contact) =>
+        `${contact.name} ${contact.company} ${contact.email}`.toLowerCase().includes(query.toLowerCase()),
+      ),
     [query, list],
   );
+
+  const updateField = (key) => (event) => setForm((prev) => ({ ...prev, [key]: event.target.value }));
+
+  const submitContact = async () => {
+    setFormError("");
+    if (!form.name.trim() || !form.phone.trim()) {
+      setFormError("Name and phone are required.");
+      return;
+    }
+    const payload = {
+      name: form.name.trim(),
+      phone: form.phone.trim(),
+      email: form.email.trim() || null,
+      gender: form.gender.trim() || null,
+      follow_up_notes: form.notes.trim() || null,
+      history: [],
+    };
+    const ageNum = parseInt(form.age, 10);
+    if (!Number.isNaN(ageNum)) payload.age = ageNum;
+
+    setSubmitting(true);
+    try {
+      const res = await api.post("/patients/", payload);
+      if (res.data && res.data.success) {
+        setOpen(false);
+        setForm(emptyForm);
+        setBanner({ type: "success", text: `Added ${payload.name}.` });
+        loadContacts();
+      } else {
+        setFormError((res.data && res.data.message) || "Could not add contact.");
+      }
+    } catch (err) {
+      setFormError(extractError(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const callContact = async (row) => {
+    setBanner(null);
+    setCallingId(row.id);
+    try {
+      const res = await api.post("/calls/outbound/trigger", null, { params: { phone: row.phone } });
+      if (res.data && res.data.success) {
+        setBanner({ type: "success", text: `Outbound call dispatched to ${row.name} (${row.phone}).` });
+      } else {
+        setBanner({ type: "error", text: (res.data && (res.data.message || res.data.error)) || "Could not place the call." });
+      }
+    } catch (err) {
+      setBanner({ type: "error", text: extractError(err) });
+    } finally {
+      setCallingId(null);
+    }
+  };
 
   const columns = [
     { key: "name", header: "Name" },
@@ -45,7 +142,30 @@ export default function Contacts() {
     { key: "email", header: "Email" },
     { key: "company", header: "Demographics / Context" },
     { key: "lastContacted", header: "Follow-up / Notes" },
-    { key: "status", header: "Status", render: (row) => <Badge tone={row.status === "Converted" || row.status === "Qualified" ? "success" : row.status === "No Answer" ? "neutral" : "warning"}>{row.status}</Badge> },
+    {
+      key: "status",
+      header: "Status",
+      render: (row) => (
+        <Badge tone={row.status === "Converted" || row.status === "Qualified" ? "success" : row.status === "No Answer" ? "neutral" : "warning"}>
+          {row.status}
+        </Badge>
+      ),
+    },
+    {
+      key: "actions",
+      header: "Actions",
+      render: (row) => (
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={callingId === row.id}
+          onClick={() => callContact(row)}
+          title="Place an outbound AI call"
+        >
+          <Phone className="h-3.5 w-3.5" /> {callingId === row.id ? "Calling..." : "Call"}
+        </Button>
+      ),
+    },
   ];
 
   return (
@@ -53,18 +173,85 @@ export default function Contacts() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight text-gray-950">Contacts</h1>
-          <p className="mt-2 text-sm text-gray-500">Import, search, and segment contacts for outbound campaigns.</p>
+          <p className="mt-2 text-sm text-gray-500">Add patients, search your list, and start outbound AI calls.</p>
         </div>
-        <Button><Upload className="h-4 w-4" /> Import contacts</Button>
+        <Button onClick={() => { setFormError(""); setForm(emptyForm); setOpen(true); }}>
+          <UserPlus className="h-4 w-4" /> Add contact
+        </Button>
       </div>
+
+      {banner && (
+        <div
+          className={`flex items-start justify-between gap-3 rounded-2xl border p-4 text-sm ${
+            banner.type === "success"
+              ? "border-emerald-100 bg-emerald-50 text-emerald-800"
+              : "border-red-100 bg-red-50 text-red-800"
+          }`}
+        >
+          <span>{banner.text}</span>
+          <button className="text-xs font-medium opacity-70 hover:opacity-100" onClick={() => setBanner(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {!loading && !live && (
+        <p className="text-xs text-gray-400">Showing sample data, couldn't reach the backend. Adding or calling requires a signed-in session and a running API.</p>
+      )}
+
       <div className="panel flex flex-col gap-3 rounded-3xl p-4 md:flex-row">
         <label className="flex flex-1 items-center gap-3 rounded-2xl border border-gray-200 px-3 py-2">
           <Search className="h-4 w-4 text-gray-400" />
-          <input className="w-full border-0 outline-none" placeholder="Search contacts..." value={query} onChange={(event) => setQuery(event.target.value)} />
+          <input
+            className="w-full border-0 outline-none"
+            placeholder="Search contacts..."
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
         </label>
-        <Button variant="secondary"><Filter className="h-4 w-4" /> Filter</Button>
       </div>
-      <DataTable columns={columns} rows={filtered} emptyTitle="No contacts match your filters" />
+
+      <DataTable columns={columns} rows={filtered} loading={loading} emptyTitle="No contacts yet, add your first one" />
+
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Add contact"
+        description="Create a patient record. Name and phone are required."
+        footer={
+          <div className="flex justify-end gap-3">
+            <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button onClick={submitContact} disabled={submitting}>{submitting ? "Saving..." : "Save contact"}</Button>
+          </div>
+        }
+      >
+        {formError && (
+          <div className="mb-4 rounded-2xl border border-red-100 bg-red-50 p-3 text-sm text-red-800">{formError}</div>
+        )}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Name *" value={form.name} onChange={updateField("name")} placeholder="Jane Doe" />
+          <Field label="Phone *" value={form.phone} onChange={updateField("phone")} placeholder="+91XXXXXXXXXX" />
+          <Field label="Email" type="email" value={form.email} onChange={updateField("email")} placeholder="Email address (optional)" />
+          <Field label="Age" type="number" value={form.age} onChange={updateField("age")} placeholder="35" />
+          <Field label="Gender" value={form.gender} onChange={updateField("gender")} placeholder="Female / Male / Other" />
+          <Field label="Follow-up notes" value={form.notes} onChange={updateField("notes")} placeholder="Prefers morning calls" />
+        </div>
+      </Modal>
     </div>
+  );
+}
+
+function Field({ label, value, onChange, placeholder, type = "text" }) {
+  return (
+    <label className="space-y-1.5">
+      <span className="block text-xs font-semibold uppercase tracking-wider text-gray-500">{label}</span>
+      <input
+        type={type}
+        className="w-full rounded-xl border border-gray-200 px-3.5 py-2 text-sm focus:border-gray-950 focus:outline-none"
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+      />
+    </label>
   );
 }

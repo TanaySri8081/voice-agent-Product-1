@@ -32,7 +32,7 @@ async def stream_minimax_tts_pcm(text: str) -> AsyncGenerator[bytes, None]:
         "Content-Type": "application/json"
     }
     
-    url = "https://api.minimax.io/v1/t2a_v2"
+    url = f"{settings.MINIMAX_API_BASE}/t2a_v2"
     if settings.MINIMAX_GROUP_ID:
         url += f"?GroupId={settings.MINIMAX_GROUP_ID}"
         

@@ -75,24 +75,23 @@ class MiniMaxSTT:
         wav_data = wav_io.getvalue()
         self.reset()  # Reset buffer for next utterance
 
-        is_mock = not settings.MINIMAX_API_KEY or "your_minimax_api_key" in settings.MINIMAX_API_KEY
+        is_mock = not settings.STT_API_KEY
         if is_mock:
-            logger.info("[MOCK] MiniMax API Key is placeholder/missing. Returning mock transcription.")
+            logger.info("[MOCK] STT_API_KEY is missing. Returning mock transcription.")
             return "I want to book an appointment for tomorrow at 10 AM."
 
-        # Dispatch to ASR endpoint (designed as a generic transcription wrapper)
+        # OpenAI-compatible transcription endpoint (MiniMax provides no STT).
         headers = {
-            "Authorization": f"Bearer {settings.MINIMAX_API_KEY}"
+            "Authorization": f"Bearer {settings.STT_API_KEY}"
         }
-        
-        # We target the transcription endpoint (e.g. OpenAI compatibility or custom path)
-        url = "https://api.minimax.io/v1/audio/transcriptions"
-        
+
+        url = f"{settings.STT_API_BASE}/audio/transcriptions"
+
         files = {
             "file": ("audio.wav", wav_data, "audio/wav")
         }
         data = {
-            "model": "whisper-1"  # Or standard transcription model identifier
+            "model": settings.STT_MODEL
         }
         
         try:

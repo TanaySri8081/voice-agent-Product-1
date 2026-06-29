@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Save, Settings2, Sliders, KeyRound, Bell, MessageSquareCode } from "lucide-react";
 import { Button } from "../components/ui/Button";
-import axios from "axios";
+import api from "../lib/api";
 
 export default function Settings() {
   const [clinicName, setClinicName] = useState("VoxPilot Voice Command Center");
@@ -10,13 +10,12 @@ export default function Settings() {
   const [systemPrompt, setSystemPrompt] = useState("");
   const [initialGreeting, setInitialGreeting] = useState("");
   
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [statusMsg, setStatusMsg] = useState("");
   const [statusType, setStatusType] = useState(""); // success or error
 
   useEffect(() => {
-    setLoading(true);
-    axios.get("http://localhost:8002/api/clinics/settings")
+    api.get("/clinics/settings")
       .then(res => {
         if (res.data && res.data.success) {
           const d = res.data.data;
@@ -39,7 +38,7 @@ export default function Settings() {
     setLoading(true);
     setStatusMsg("");
     
-    axios.put("http://localhost:8002/api/clinics/settings", {
+    api.put("/clinics/settings", {
       name: clinicName,
       did: did,
       transfer_number: transferNumber,
@@ -55,7 +54,7 @@ export default function Settings() {
           setStatusType("error");
         }
       })
-      .catch(err => {
+      .catch(() => {
         setStatusMsg("Failed to connect to the server.");
         setStatusType("error");
       })

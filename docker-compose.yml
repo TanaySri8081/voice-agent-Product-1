@@ -11,16 +11,10 @@ services:
     volumes:
       - .:/app
     depends_on:
-      - mongodb
       - redis
 
-  mongodb:
-    image: mongo:6.0
-    restart: unless-stopped
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongodb_data:/data/db
+  # Database is hosted on Supabase (Postgres); no local DB container needed.
+  # Set DATABASE_URL in .env to your Supabase connection string.
 
   redis:
     image: redis:7.0-alpine
@@ -31,5 +25,4 @@ services:
       - redis_data:/data
 
 volumes:
-  mongodb_data:
   redis_data:

@@ -6,7 +6,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
-from backend.services.db import connect_to_mongo, close_mongo_connection
+from backend.services.db import connect_to_db, close_db_connection
 from backend.routes.auth import router as auth_router
 from backend.routes.calls import router as calls_router
 from backend.routes.patients import router as patients_router
@@ -28,14 +28,14 @@ limiter = Limiter(key_func=get_remote_address)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: connect to database & start scheduler
-    await connect_to_mongo()
+    await connect_to_db()
     try:
         setup_scheduler()
     except Exception as e:
         logger.error(f"Failed to start background scheduler: {e}")
     yield
     # Shutdown: close connection
-    await close_mongo_connection()
+    await close_db_connection()
 
 app = FastAPI(
     title="VoxPilot AI - Healthcare Calling Receptionist",

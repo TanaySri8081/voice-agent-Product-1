@@ -1,9 +1,7 @@
 import { create } from "zustand";
-import axios from "axios";
+import api from "../lib/api";
 
-const API_URL = "http://localhost:8002/api";
-
-export const useAuthStore = create((set, get) => ({
+export const useAuthStore = create((set) => ({
   token: localStorage.getItem("token") || null,
   user: JSON.parse(localStorage.getItem("user")) || null,
   isAuthenticated: !!localStorage.getItem("token"),
@@ -13,15 +11,12 @@ export const useAuthStore = create((set, get) => ({
   login: async (email, password) => {
     set({ loading: true, error: null });
     try {
-      const response = await axios.post(`${API_URL}/auth/login`, { email, password });
+      const response = await api.post(`/auth/login`, { email, password });
       const { success, data, message } = response.data;
       
       if (success && data.access_token) {
         localStorage.setItem("token", data.access_token);
         localStorage.setItem("user", JSON.stringify(data));
-        
-        // Set Auth header for subsequent calls
-        axios.defaults.headers.common["Authorization"] = `Bearer ${data.access_token}`;
         
         set({
           token: data.access_token,
@@ -58,7 +53,7 @@ export const useAuthStore = create((set, get) => ({
   register: async (email, password, name, clinicName, did) => {
     set({ loading: true, error: null });
     try {
-      const response = await axios.post(`${API_URL}/auth/register`, {
+      const response = await api.post(`/auth/register`, {
         email,
         password,
         name,
@@ -71,8 +66,6 @@ export const useAuthStore = create((set, get) => ({
       if (success && data.access_token) {
         localStorage.setItem("token", data.access_token);
         localStorage.setItem("user", JSON.stringify(data));
-        
-        axios.defaults.headers.common["Authorization"] = `Bearer ${data.access_token}`;
         
         set({
           token: data.access_token,
@@ -109,13 +102,6 @@ export const useAuthStore = create((set, get) => ({
   logout: () => {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
-    delete axios.defaults.headers.common["Authorization"];
     set({ token: null, user: null, isAuthenticated: false });
   }
 }));
-
-// Initialize headers on reload if token exists
-const initialToken = localStorage.getItem("token");
-if (initialToken) {
-  axios.defaults.headers.common["Authorization"] = `Bearer ${initialToken}`;
-}

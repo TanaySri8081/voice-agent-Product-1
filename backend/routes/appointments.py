@@ -1,86 +1,106 @@
-from datetime import datetime
-from bson import ObjectId
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from backend.services.db import get_database
+from fastapi import APIRouter, Depends
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.services.db import get_db
 from backend.routes.auth import get_current_user
+from backend.models import Appointment
 from backend.schemas.patient import AppointmentCreate
-from backend.utils.helpers import api_response, serialize_doc, serialize_docs
+from backend.utils.helpers import api_response, serialize_model, serialize_models, to_uuid
 
 router = APIRouter(prefix="/appointments", tags=["Appointments"])
 
+
 @router.get("/")
-async def list_appointments(current_user: dict = Depends(get_current_user)):
-    db = get_database()
-    clinic_id = current_user.get("clinic_id")
-    if not clinic_id:
+async def list_appointments(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    clinic_id = to_uuid(current_user.get("clinic_id"))
+    if clinic_id is None:
         return api_response(success=False, message="No clinic associated with user", status_code=400)
-        
-    appointments = await db.appointments.find({"clinic_id": clinic_id}).sort("appointment_date", 1).to_list(200)
+
+    result = await db.execute(
+        select(Appointment)
+        .where(Appointment.clinic_id == clinic_id)
+        .order_by(Appointment.appointment_date.asc())
+    )
     return api_response(
         success=True,
         message="Appointments fetched successfully",
-        data=serialize_docs(appointments)
+        data=serialize_models(result.scalars().all()),
     )
 
+
 @router.post("/")
-async def create_appointment(payload: AppointmentCreate, current_user: dict = Depends(get_current_user)):
-    db = get_database()
-    clinic_id = current_user.get("clinic_id")
-    if not clinic_id:
+async def create_appointment(
+    payload: AppointmentCreate,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    clinic_id = to_uuid(current_user.get("clinic_id"))
+    if clinic_id is None:
         return api_response(success=False, message="No clinic associated with user", status_code=400)
-        
-    appointment_doc = payload.dict()
-    appointment_doc["clinic_id"] = clinic_id
-    appointment_doc["created_at"] = datetime.utcnow()
-    
-    result = await db.appointments.insert_one(appointment_doc)
-    appointment_doc["id"] = str(result.inserted_id)
-    del appointment_doc["_id"]
-    
+
+    appointment = Appointment(clinic_id=clinic_id, **payload.dict())
+    db.add(appointment)
+    await db.commit()
+
     return api_response(
         success=True,
         message="Appointment created successfully",
-        data=appointment_doc
+        data=serialize_model(appointment),
     )
+
 
 @router.put("/{appointment_id}")
 async def update_appointment(
     appointment_id: str,
     payload: AppointmentCreate,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    db = get_database()
-    clinic_id = current_user.get("clinic_id")
-    
-    existing = await db.appointments.find_one({"_id": ObjectId(appointment_id), "clinic_id": clinic_id})
-    if not existing:
+    clinic_id = to_uuid(current_user.get("clinic_id"))
+    aid = to_uuid(appointment_id)
+    if aid is None:
         return api_response(success=False, message="Appointment not found", status_code=404)
-        
-    update_data = payload.dict(exclude_unset=True)
-    await db.appointments.update_one({"_id": ObjectId(appointment_id)}, {"$set": update_data})
-    
-    updated = await db.appointments.find_one({"_id": ObjectId(appointment_id)})
+
+    result = await db.execute(
+        select(Appointment).where(Appointment.id == aid, Appointment.clinic_id == clinic_id)
+    )
+    appointment = result.scalar_one_or_none()
+    if not appointment:
+        return api_response(success=False, message="Appointment not found", status_code=404)
+
+    for key, value in payload.dict(exclude_unset=True).items():
+        setattr(appointment, key, value)
+    await db.commit()
+
     return api_response(
         success=True,
         message="Appointment updated successfully",
-        data=serialize_doc(updated)
+        data=serialize_model(appointment),
     )
 
+
 @router.delete("/{appointment_id}")
-async def cancel_appointment(appointment_id: str, current_user: dict = Depends(get_current_user)):
-    db = get_database()
-    clinic_id = current_user.get("clinic_id")
-    
-    existing = await db.appointments.find_one({"_id": ObjectId(appointment_id), "clinic_id": clinic_id})
-    if not existing:
+async def cancel_appointment(
+    appointment_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    clinic_id = to_uuid(current_user.get("clinic_id"))
+    aid = to_uuid(appointment_id)
+    if aid is None:
         return api_response(success=False, message="Appointment not found", status_code=404)
-        
-    await db.appointments.update_one(
-        {"_id": ObjectId(appointment_id)},
-        {"$set": {"status": "cancelled"}}
+
+    result = await db.execute(
+        select(Appointment).where(Appointment.id == aid, Appointment.clinic_id == clinic_id)
     )
-    
-    return api_response(
-        success=True,
-        message="Appointment cancelled successfully"
-    )
+    appointment = result.scalar_one_or_none()
+    if not appointment:
+        return api_response(success=False, message="Appointment not found", status_code=404)
+
+    appointment.status = "cancelled"
+    await db.commit()
+    return api_response(success=True, message="Appointment cancelled successfully")

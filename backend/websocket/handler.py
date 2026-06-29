@@ -2,7 +2,7 @@ import base64
 import json
 import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from backend.services.db import get_database
+from backend.services import repository
 from backend.integrations.minimax.stt import MiniMaxSTT
 from backend.integrations.minimax.llm import call_minimax_llm
 from backend.integrations.minimax.tts import stream_minimax_tts_pcm
@@ -17,7 +17,6 @@ async def handle_media_stream(websocket: WebSocket):
     await websocket.accept()
     logger.info("Accepted incoming Vobiz media stream connection.")
     
-    db = get_database()
     vobiz_client = VobizClient()
     stt = MiniMaxSTT()
     
@@ -25,6 +24,7 @@ async def handle_media_stream(websocket: WebSocket):
     query_params = websocket.query_params
     destination = query_params.get("destination", "")
     caller_phone = query_params.get("phone", "")
+    direction = "inbound" if not query_params.get("outbound") else "outbound"
     
     logger.info(f"Connection metadata: DID={destination}, Caller={caller_phone}")
     
@@ -33,12 +33,12 @@ async def handle_media_stream(websocket: WebSocket):
     system_prompt = settings.SYSTEM_PROMPT
     clinic_name = "Rapid X High School"  # default fallback
     
-    if db is not None and destination:
-        tenant = await db.tenants.find_one({"did": destination})
+    if destination:
+        tenant = await repository.get_tenant_by_did(destination)
         if tenant:
-            clinic_id = str(tenant["_id"])
+            clinic_id = tenant["id"]
             clinic_name = tenant.get("name", "Clinic")
-            system_prompt = tenant.get("system_prompt", settings.SYSTEM_PROMPT)
+            system_prompt = tenant.get("system_prompt") or settings.SYSTEM_PROMPT
             logger.info(f"Resolved call to clinic: {clinic_name} (ID: {clinic_id})")
         else:
             logger.warning(f"No tenant mapping found for DID: {destination}. Using default configuration.")
@@ -61,21 +61,9 @@ async def handle_media_stream(websocket: WebSocket):
                 stream_id = start_data.get("streamId")
                 logger.info(f"Vobiz stream started. Call ID: {call_id}, Stream ID: {stream_id}")
                 
-                # Update call status in database if connected
-                if db is not None and call_id:
-                    await db.call_logs.update_one(
-                        {"call_id": call_id},
-                        {
-                            "$set": {
-                                "status": "active",
-                                "clinic_id": clinic_id,
-                                "caller_name": caller_phone,
-                                "phone": caller_phone,
-                                "direction": "inbound" if not query_params.get("outbound") else "outbound"
-                            }
-                        },
-                        upsert=True
-                    )
+                # Create/update the call log row
+                if call_id:
+                    await repository.upsert_call_start(call_id, clinic_id, caller_phone, direction)
                 
                 # Generate and stream initial greeting
                 greeting_prompt = settings.INITIAL_GREETING
@@ -83,7 +71,6 @@ async def handle_media_stream(websocket: WebSocket):
                     chat_history + [{"role": "user", "content": greeting_prompt}],
                     call_sid=call_id,
                     clinic_id=clinic_id,
-                    db=db
                 )
                 
                 logger.info(f"Initial Greeting: {greeting_reply}")
@@ -114,19 +101,15 @@ async def handle_media_stream(websocket: WebSocket):
                         if transcript:
                             chat_history.append({"role": "user", "content": transcript})
                             
-                            # Log transcript fragment in DB if database is connected
-                            if db is not None and call_id:
-                                await db.call_logs.update_one(
-                                    {"call_id": call_id},
-                                    {"$push": {"transcript": {"role": "user", "content": transcript}}}
-                                )
+                            # Log the user's utterance
+                            if call_id:
+                                await repository.append_transcript(call_id, "user", transcript)
                             
                             # Get AI Reply
                             reply = await call_minimax_llm(
                                 chat_history,
                                 call_sid=call_id,
                                 clinic_id=clinic_id,
-                                db=db
                             )
                             logger.info(f"AI response: {reply}")
                             
@@ -136,21 +119,15 @@ async def handle_media_stream(websocket: WebSocket):
                                 logger.info(f"Tool execution requested call transfer to: {dest}")
                                 # Execute transfer
                                 await vobiz_client.transfer_active_call(call_uuid=call_id, destination=dest)
-                                if db is not None and call_id:
-                                    await db.call_logs.update_one(
-                                        {"call_id": call_id},
-                                        {"$set": {"status": "transferred"}}
-                                    )
+                                if call_id:
+                                    await repository.set_call_status(call_id, "transferred")
                                 break
                             
                             chat_history.append({"role": "assistant", "content": reply})
                             
-                            # Log assistant response to DB
-                            if db is not None and call_id:
-                                await db.call_logs.update_one(
-                                    {"call_id": call_id},
-                                    {"$push": {"transcript": {"role": "assistant", "content": reply}}}
-                                )
+                            # Log assistant response
+                            if call_id:
+                                await repository.append_transcript(call_id, "assistant", reply)
                             
                             # Stream TTS generated reply
                             async for pcm_chunk in stream_minimax_tts_pcm(reply):
@@ -166,17 +143,11 @@ async def handle_media_stream(websocket: WebSocket):
                                 
     except WebSocketDisconnect:
         logger.info(f"Vobiz stream WebSocket disconnected for Call ID: {call_id}")
-        if db is not None and call_id:
-            await db.call_logs.update_one(
-                {"call_id": call_id},
-                {"$set": {"status": "completed"}}
-            )
+        if call_id:
+            await repository.set_call_status(call_id, "completed")
     except Exception as e:
         logger.error(f"Error handling media stream WebSocket: {e}")
-        if db is not None and call_id:
-            await db.call_logs.update_one(
-                {"call_id": call_id},
-                {"$set": {"status": "failed"}}
-            )
+        if call_id:
+            await repository.set_call_status(call_id, "failed")
     finally:
         logger.info(f"Session finished for Call ID: {call_id}")

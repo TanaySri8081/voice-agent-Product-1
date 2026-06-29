@@ -1,53 +1,54 @@
 import json
 import logging
 import httpx
-from datetime import datetime
 from backend.config.settings import settings
+from backend.services import repository
 
 logger = logging.getLogger("minimax-llm")
 
-# Mock functions for tool calling, which will be integrated with database controllers later
-async def mock_lookup_user(phone: str, db=None) -> str:
+# Tool-calling helpers. These now read/write through the Postgres repository.
+async def mock_lookup_user(phone: str) -> str:
     logger.info(f"Looking up user: {phone}")
-    if db is not None:
-        patient = await db.patients.find_one({"phone": phone})
-        if patient:
-            return f"Patient found: {patient['name']}. Age: {patient.get('age')}. History: {', '.join(patient.get('history', []))}"
+    patient = await repository.lookup_patient_by_phone(phone)
+    if patient:
+        history = patient.get("history") or []
+        return (
+            f"Patient found: {patient['name']}. Age: {patient.get('age')}. "
+            f"History: {', '.join(history)}"
+        )
     return "Patient not found. Registered as a new patient."
 
-async def mock_book_appointment(date: str, time: str, reason: str, clinic_id: str, phone: str, db=None) -> str:
+async def mock_book_appointment(date: str, time: str, reason: str, clinic_id: str, phone: str) -> str:
     logger.info(f"Booking appointment on {date} at {time} for {reason}")
-    if db is not None:
-        # Find patient by phone
-        patient = await db.patients.find_one({"phone": phone, "clinic_id": clinic_id})
+    if clinic_id:
+        # Find patient by phone within the clinic
+        patient = await repository.lookup_patient_by_phone(phone, clinic_id)
         patient_name = patient["name"] if patient else "Unknown Patient"
-        patient_id = str(patient["_id"]) if patient else "new"
-        
-        appointment_doc = {
-            "clinic_id": clinic_id,
-            "patient_id": patient_id,
-            "patient_name": patient_name,
-            "appointment_date": f"{date} {time}",
-            "reason": reason,
-            "status": "scheduled",
-            "created_at": datetime.utcnow()
-        }
-        await db.appointments.insert_one(appointment_doc)
-        return f"Appointment successfully scheduled for {patient_name} on {date} at {time}."
+        patient_id = patient["id"] if patient else "new"
+
+        booked = await repository.create_appointment_record(
+            clinic_id=clinic_id,
+            patient_id=patient_id,
+            patient_name=patient_name,
+            appointment_date=f"{date} {time}",
+            reason=reason,
+            status="scheduled",
+        )
+        if booked:
+            return f"Appointment successfully scheduled for {patient_name} on {date} at {time}."
     return f"Appointment booked on {date} at {time}."
 
-async def call_minimax_llm(messages: list, call_sid: str, clinic_id: str = None, db=None) -> str:
+async def call_minimax_llm(messages: list, call_sid: str, clinic_id: str = None) -> str:
     # Check if we should use mock LLM response
     is_mock = not settings.MINIMAX_API_KEY or "your_minimax_api_key" in settings.MINIMAX_API_KEY
     clinic_name = "our clinic"
     
     if is_mock:
         logger.info("[MOCK] MiniMax API Key is a placeholder/missing. Using mock LLM response.")
-        # Retrieve clinic name if db is available
-        if db is not None and clinic_id:
+        # Retrieve clinic name if available
+        if clinic_id:
             try:
-                from bson import ObjectId
-                tenant = await db.tenants.find_one({"_id": ObjectId(clinic_id)})
+                tenant = await repository.get_tenant_by_id(clinic_id)
                 if tenant:
                     clinic_name = tenant.get("name", clinic_name)
             except Exception:
@@ -65,11 +66,11 @@ async def call_minimax_llm(messages: list, call_sid: str, clinic_id: str = None,
             return f"Hello! Welcome to {clinic_name}. I am your AI receptionist. I can help you look up patient details, book an appointment, or transfer your call. How can I help you today?"
         elif "book" in user_message or "schedule" in user_message or "appointment" in user_message:
             logger.info("[MOCK] Simulating tool call execution for book_appointment.")
-            res = await mock_book_appointment("2026-06-26", "10:00 AM", "General Consultation", clinic_id or "demo-clinic-123", "+919876543210", db)
+            res = await mock_book_appointment("2026-06-26", "10:00 AM", "General Consultation", clinic_id or "demo-clinic-123", "+919876543210")
             return res
         elif "lookup" in user_message or "patient" in user_message or "who am i" in user_message or "find" in user_message:
             logger.info("[MOCK] Simulating tool call execution for lookup_user.")
-            res = await mock_lookup_user("+919876543210", db)
+            res = await mock_lookup_user("+919876543210")
             return res
         elif "transfer" in user_message or "doctor" in user_message or "human" in user_message or "emergency" in user_message:
             logger.info("[MOCK] Simulating tool call execution for transfer_call.")
@@ -83,7 +84,7 @@ async def call_minimax_llm(messages: list, call_sid: str, clinic_id: str = None,
         "Content-Type": "application/json"
     }
     
-    url = "https://api.minimax.chat/v1/text/chatcompletion_v2"
+    url = f"{settings.MINIMAX_API_BASE}/text/chatcompletion_v2"
     if settings.MINIMAX_GROUP_ID:
         url += f"?GroupId={settings.MINIMAX_GROUP_ID}"
         
@@ -181,7 +182,7 @@ async def call_minimax_llm(messages: list, call_sid: str, clinic_id: str = None,
                     arguments = json.loads(tool_call["function"]["arguments"])
                     
                     if func_name == "lookup_user":
-                        func_result = await mock_lookup_user(arguments.get("phone"), db)
+                        func_result = await mock_lookup_user(arguments.get("phone"))
                     elif func_name == "book_appointment":
                         # Attempt to find Caller's phone from context
                         caller_phone = arguments.get("phone", "")
@@ -191,7 +192,6 @@ async def call_minimax_llm(messages: list, call_sid: str, clinic_id: str = None,
                             arguments.get("reason", "Consultation"),
                             clinic_id,
                             caller_phone,
-                            db
                         )
                     elif func_name == "transfer_call":
                         # We return a trigger string so the WebSocket handler knows to execute the transfer XML action
@@ -210,7 +210,7 @@ async def call_minimax_llm(messages: list, call_sid: str, clinic_id: str = None,
                     })
                 
                 # Recursively call LLM with the updated history
-                return await call_minimax_llm(messages, call_sid, clinic_id, db)
+                return await call_minimax_llm(messages, call_sid, clinic_id)
             else:
                 return message["content"]
         except Exception as e:
