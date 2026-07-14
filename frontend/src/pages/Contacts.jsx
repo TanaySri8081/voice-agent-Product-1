@@ -1,4 +1,4 @@
-import { Phone, Search, UserPlus } from "lucide-react";
+import { Search, UserPlus } from "lucide-react";
 import { useMemo, useState, useEffect, useCallback } from "react";
 import api from "../lib/api";
 import DataTable from "../components/DataTable";
@@ -32,8 +32,8 @@ function formatPatient(p) {
     phone: p.phone,
     email: p.email || "N/A",
     company: p.gender ? `${p.gender}, Age ${p.age || "N/A"}` : "Patient",
-    lastContacted: p.follow_up_notes || "Never",
-    status: p.history && p.history.length > 0 ? "Qualified" : "Interested",
+    lastContacted: p.follow_up_notes || "None",
+    status: p.history && p.history.length > 0 ? "Returning" : "New",
   };
 }
 
@@ -49,7 +49,6 @@ export default function Contacts() {
   const [formError, setFormError] = useState("");
 
   const [banner, setBanner] = useState(null); // { type: "success" | "error", text }
-  const [callingId, setCallingId] = useState(null);
 
   const loadContacts = useCallback(async () => {
     setLoading(true);
@@ -119,23 +118,6 @@ export default function Contacts() {
     }
   };
 
-  const callContact = async (row) => {
-    setBanner(null);
-    setCallingId(row.id);
-    try {
-      const res = await api.post("/calls/outbound/trigger", null, { params: { phone: row.phone } });
-      if (res.data && res.data.success) {
-        setBanner({ type: "success", text: `Outbound call dispatched to ${row.name} (${row.phone}).` });
-      } else {
-        setBanner({ type: "error", text: (res.data && (res.data.message || res.data.error)) || "Could not place the call." });
-      }
-    } catch (err) {
-      setBanner({ type: "error", text: extractError(err) });
-    } finally {
-      setCallingId(null);
-    }
-  };
-
   const columns = [
     { key: "name", header: "Name" },
     { key: "phone", header: "Phone" },
@@ -145,26 +127,7 @@ export default function Contacts() {
     {
       key: "status",
       header: "Status",
-      render: (row) => (
-        <Badge tone={row.status === "Converted" || row.status === "Qualified" ? "success" : row.status === "No Answer" ? "neutral" : "warning"}>
-          {row.status}
-        </Badge>
-      ),
-    },
-    {
-      key: "actions",
-      header: "Actions",
-      render: (row) => (
-        <Button
-          variant="secondary"
-          size="sm"
-          disabled={callingId === row.id}
-          onClick={() => callContact(row)}
-          title="Place an outbound AI call"
-        >
-          <Phone className="h-3.5 w-3.5" /> {callingId === row.id ? "Calling..." : "Call"}
-        </Button>
-      ),
+      render: (row) => <Badge tone={row.status === "Returning" ? "success" : "neutral"}>{row.status}</Badge>,
     },
   ];
 
@@ -173,7 +136,7 @@ export default function Contacts() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight text-gray-950">Contacts</h1>
-          <p className="mt-2 text-sm text-gray-500">Add patients, search your list, and start outbound AI calls.</p>
+          <p className="mt-2 text-sm text-gray-500">Add and manage patient records the AI receptionist uses to recognise inbound callers.</p>
         </div>
         <Button onClick={() => { setFormError(""); setForm(emptyForm); setOpen(true); }}>
           <UserPlus className="h-4 w-4" /> Add contact
@@ -196,7 +159,7 @@ export default function Contacts() {
       )}
 
       {!loading && !live && (
-        <p className="text-xs text-gray-400">Showing sample data, couldn't reach the backend. Adding or calling requires a signed-in session and a running API.</p>
+        <p className="text-xs text-gray-400">Showing sample data, couldn't reach the backend. Adding requires a signed-in session and a running API.</p>
       )}
 
       <div className="panel flex flex-col gap-3 rounded-3xl p-4 md:flex-row">

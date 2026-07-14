@@ -6,7 +6,7 @@ from backend.config.settings import settings
 
 logger = logging.getLogger("minimax-tts")
 
-async def stream_minimax_tts_pcm(text: str) -> AsyncGenerator[bytes, None]:
+async def stream_minimax_tts_pcm(text: str, voice: str = None, language_boost: str = None) -> AsyncGenerator[bytes, None]:
     """
     Synthesize text into raw linear 16-bit PCM bytes at 8kHz sample rate.
     Yields chunks of PCM bytes as they arrive from MiniMax.
@@ -40,8 +40,9 @@ async def stream_minimax_tts_pcm(text: str) -> AsyncGenerator[bytes, None]:
         "model": settings.MINIMAX_TTS_MODEL,
         "text": text,
         "stream": True,
+        "language_boost": language_boost or settings.MINIMAX_LANGUAGE_BOOST,
         "voice_setting": {
-            "voice_id": settings.MINIMAX_TTS_VOICE,
+            "voice_id": voice or settings.MINIMAX_TTS_VOICE,
             "speed": 1,
             "vol": 1,
             "pitch": 0

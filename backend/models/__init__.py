@@ -44,6 +44,10 @@ class Tenant(Base):
     did = mapped_column(String(50), nullable=True, unique=True)
     system_prompt = mapped_column(Text, nullable=True)
     initial_greeting = mapped_column(Text, nullable=True)
+    knowledge_base = mapped_column(Text, nullable=True)
+    voice = mapped_column(String(100), nullable=True)
+    language = mapped_column(String(20), nullable=True)
+    llm_model = mapped_column(String(100), nullable=True)
     transfer_number = mapped_column(String(50), nullable=True)
     created_at = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
@@ -130,4 +134,38 @@ class CallLog(Base):
     created_at = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
 
-__all__ = ["Base", "Tenant", "User", "Patient", "Appointment", "CallLog"]
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # Only the SHA-256 hash of the token is stored, never the token itself.
+    token_hash = mapped_column(String(64), nullable=False, unique=True)
+    purpose = mapped_column(String(20), nullable=False, default="reset")  # reset | invite
+    expires_at = mapped_column(DateTime, nullable=False)
+    used_at = mapped_column(DateTime, nullable=True)
+    created_at = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class PhoneNumber(Base):
+    __tablename__ = "phone_numbers"
+
+    id = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    clinic_id = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    number = mapped_column(String(32), nullable=False, unique=True)
+    label = mapped_column(String(100), nullable=True)
+    status = mapped_column(String(20), nullable=False, default="active")  # active | inactive
+    created_at = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+__all__ = ["Base", "Tenant", "User", "Patient", "Appointment", "CallLog", "PasswordResetToken", "PhoneNumber"]

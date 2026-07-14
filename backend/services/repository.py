@@ -11,10 +11,11 @@ previous `if db is not None` guards.
 import logging
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from backend.services.db import get_sessionmaker
-from backend.models import Tenant, Patient, Appointment, CallLog
+from backend.models import Tenant, Patient, Appointment, CallLog, PhoneNumber
 from backend.utils.helpers import serialize_model, to_uuid
 
 logger = logging.getLogger("repository")
@@ -27,6 +28,17 @@ async def get_tenant_by_did(did: str):
     if Session is None or not did:
         return None
     async with Session() as session:
+        # Prefer the managed phone_numbers table (active connected numbers).
+        pn = (await session.execute(
+            select(PhoneNumber).where(PhoneNumber.number == did, PhoneNumber.status == "active")
+        )).scalar_one_or_none()
+        if pn is not None:
+            tenant = (await session.execute(
+                select(Tenant).where(Tenant.id == pn.clinic_id)
+            )).scalar_one_or_none()
+            if tenant is not None:
+                return serialize_model(tenant)
+        # Fallback: the legacy single DID stored directly on the tenant.
         result = await session.execute(select(Tenant).where(Tenant.did == did))
         return serialize_model(result.scalar_one_or_none())
 
@@ -54,6 +66,48 @@ async def lookup_patient_by_phone(phone: str, clinic_id=None):
             stmt = stmt.where(Patient.clinic_id == cid)
         result = await session.execute(stmt)
         return serialize_model(result.scalars().first())
+
+
+async def get_or_create_patient(clinic_id, phone, name=None):
+    """Find a patient by (clinic_id, phone), or create a new lead if missing.
+
+    Used during inbound calls so an unknown caller who books is captured as a
+    contact. If we learn a real name for an existing "Caller" record, fill it in.
+    Returns the serialized patient dict (with id), or None if unconfigured.
+    """
+    Session = get_sessionmaker()
+    cid = to_uuid(clinic_id)
+    if Session is None or cid is None or not phone:
+        return None
+    clean_name = (name or "").strip()
+    async with Session() as session:
+        result = await session.execute(
+            select(Patient).where(Patient.clinic_id == cid, Patient.phone == phone)
+        )
+        patient = result.scalar_one_or_none()
+
+        if patient is None:
+            patient = Patient(
+                clinic_id=cid,
+                name=clean_name or "Caller",
+                phone=phone,
+                history=[],
+            )
+            session.add(patient)
+            try:
+                await session.commit()
+            except IntegrityError:
+                # Created concurrently (unique clinic_id+phone) -> fetch the winner.
+                await session.rollback()
+                result = await session.execute(
+                    select(Patient).where(Patient.clinic_id == cid, Patient.phone == phone)
+                )
+                patient = result.scalar_one_or_none()
+        elif clean_name and (not patient.name or patient.name == "Caller"):
+            patient.name = clean_name
+            await session.commit()
+
+        return serialize_model(patient)
 
 
 async def create_appointment_record(
@@ -146,6 +200,10 @@ async def set_call_status(call_id: str, status: str):
         call_log = result.scalar_one_or_none()
         if call_log is not None:
             call_log.status = status
+            if status in ("completed", "failed", "transferred") and call_log.created_at:
+                from datetime import datetime
+                delta = datetime.utcnow() - call_log.created_at
+                call_log.duration = int(delta.total_seconds())
             await session.commit()
 
 

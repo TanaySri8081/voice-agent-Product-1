@@ -2,6 +2,8 @@ from datetime import datetime, timedelta
 from typing import Optional, Union, Any
 from jose import jwt, JWTError
 import bcrypt
+import secrets
+import hashlib
 from backend.config.settings import settings
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -31,3 +33,13 @@ def decode_access_token(token: str) -> Optional[dict]:
         return payload
     except JWTError:
         return None
+
+
+def generate_token() -> str:
+    """Return a URL-safe random token (the plaintext handed to the user)."""
+    return secrets.token_urlsafe(32)
+
+
+def hash_token(token: str) -> str:
+    """SHA-256 hex of a token; only this hash is ever stored at rest."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()

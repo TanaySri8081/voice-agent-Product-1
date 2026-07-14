@@ -2,18 +2,20 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from backend.services.db import connect_to_db, close_db_connection
+from backend.services.limiter import limiter
 from backend.routes.auth import router as auth_router
 from backend.routes.calls import router as calls_router
 from backend.routes.patients import router as patients_router
 from backend.routes.appointments import router as appointments_router
 from backend.routes.clinics import router as clinics_router
+from backend.routes.team import router as team_router
+from backend.routes.phone_numbers import router as phone_numbers_router
+from backend.routes.stats import router as stats_router
 from backend.websocket.handler import router as ws_router
-from backend.jobs.scheduler import setup_scheduler
 from backend.config.settings import settings
 
 # Configure logger
@@ -23,16 +25,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("app-bootstrap")
 
-limiter = Limiter(key_func=get_remote_address)
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: connect to database & start scheduler
+    # Startup: connect to the database (inbound-only; no outbound scheduler)
     await connect_to_db()
-    try:
-        setup_scheduler()
-    except Exception as e:
-        logger.error(f"Failed to start background scheduler: {e}")
     yield
     # Shutdown: close connection
     await close_db_connection()
@@ -47,10 +43,11 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# CORS configuration
+# CORS configuration — restricted to configured dashboard origins.
+_cors_origins = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Restrict this in production
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -62,6 +59,9 @@ app.include_router(calls_router, prefix="/api")
 app.include_router(patients_router, prefix="/api")
 app.include_router(appointments_router, prefix="/api")
 app.include_router(clinics_router, prefix="/api")
+app.include_router(team_router, prefix="/api")
+app.include_router(phone_numbers_router, prefix="/api")
+app.include_router(stats_router, prefix="/api")
 
 # Mount Websocket Routing
 app.include_router(ws_router)

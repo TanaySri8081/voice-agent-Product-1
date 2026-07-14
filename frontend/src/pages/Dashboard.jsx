@@ -1,100 +1,116 @@
-import { BarChart, Bar, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Clock3, PhoneCall, Timer, Trophy, WalletCards } from "lucide-react";
+import { useEffect, useState } from "react";
+import { CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Activity, CalendarCheck, PhoneCall, Timer, Users } from "lucide-react";
+import api from "../lib/api";
 import ChartCard from "../components/ChartCard";
 import DataTable from "../components/DataTable";
 import StatCard from "../components/StatCard";
 import { Badge } from "../components/ui/Badge";
-import { Button } from "../components/ui/Button";
-import { callOutcomes, dailyCalls, recentActivity, revenueAnalytics } from "../data/mockData";
 
-const COLORS = ["#111827", "#6b7280", "#d1d5db", "#f59e0b"];
+const COLORS = ["#111827", "#6b7280", "#d1d5db", "#f59e0b", "#10b981", "#ef4444"];
+
+const fmtDuration = (s) => `${Math.floor((s || 0) / 60)}m ${(s || 0) % 60}s`;
+const dayLabel = (iso) => {
+  try {
+    return new Date(iso).toLocaleDateString(undefined, { weekday: "short" });
+  } catch {
+    return iso;
+  }
+};
+const toneFor = (status) => {
+  const s = (status || "").toLowerCase();
+  if (["completed", "active"].includes(s)) return "success";
+  if (s === "transferred") return "warning";
+  if (["failed", "no-answer"].includes(s)) return "danger";
+  return "neutral";
+};
 
 export default function Dashboard() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.get("/stats/overview")
+      .then((res) => { if (res.data?.success) setData(res.data.data); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const totals = data?.totals || {};
+  const calls = data?.calls || {};
+  const daily = (data?.daily || []).map((d) => ({ ...d, label: dayLabel(d.date) }));
+  const outcomes = data?.outcomes || [];
+  const recent = data?.recent || [];
+
   const columns = [
-    { key: "callerName", header: "Caller Name" },
-    { key: "phone", header: "Phone Number" },
-    { key: "agent", header: "Agent Used" },
+    { key: "customer", header: "Caller" },
+    { key: "phone", header: "Phone" },
+    { key: "direction", header: "Direction", render: (row) => <span className="capitalize">{row.direction}</span> },
     { key: "duration", header: "Duration" },
     { key: "status", header: "Status", render: (row) => <Badge tone={toneFor(row.status)}>{row.status}</Badge> },
-    { key: "date", header: "Date" },
+    { key: "date", header: "When", render: (row) => (row.date ? new Date(row.date).toLocaleString() : "—") },
   ];
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-sm font-medium text-gray-500">Outbound command center</p>
-          <h1 className="mt-1 text-3xl font-semibold tracking-tight text-gray-950">Dashboard</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-500">
-            Monitor call volume, answer rates, conversions, agent activity, and campaign performance in real time.
-          </p>
-        </div>
-        <Button>Launch campaign</Button>
+      <div>
+        <p className="text-sm font-medium text-gray-500">Inbound reception center</p>
+        <h1 className="mt-1 text-3xl font-semibold tracking-tight text-gray-950">Dashboard</h1>
+        <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-500">A live view of calls, appointments, and your AI receptionist's activity.</p>
       </div>
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <StatCard title="Total Calls" value="18,420" change="+12.4%" icon={PhoneCall} />
-        <StatCard title="Successful Calls" value="12,894" change="+8.7%" icon={Trophy} tone="light" />
-        <StatCard title="Avg. Duration" value="3m 42s" change="-4.1%" icon={Timer} tone="light" />
-        <StatCard title="Conversion Rate" value="24.8%" change="+3.6%" icon={WalletCards} tone="light" />
-        <StatCard title="AI Minutes Used" value="64.2k" change="+16.2%" icon={Clock3} tone="light" />
+        <StatCard title="Total Calls" value={loading ? "…" : (totals.calls ?? 0)} icon={PhoneCall} />
+        <StatCard title="Calls Today" value={loading ? "…" : (calls.today ?? 0)} icon={Activity} tone="light" />
+        <StatCard title="Appointments" value={loading ? "…" : (totals.appointments ?? 0)} icon={CalendarCheck} tone="light" />
+        <StatCard title="Contacts" value={loading ? "…" : (totals.contacts ?? 0)} icon={Users} tone="light" />
+        <StatCard title="Avg Duration" value={loading ? "…" : fmtDuration(calls.avgDurationSec)} icon={Timer} tone="light" />
       </section>
 
       <section className="grid gap-6 xl:grid-cols-3">
-        <ChartCard title="Daily outbound calls" description="Calls, answered calls, and conversions this week">
+        <ChartCard title="Daily inbound calls" description="Calls received over the last 7 days">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={dailyCalls}>
+            <LineChart data={daily}>
               <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
-              <XAxis dataKey="day" tickLine={false} axisLine={false} />
-              <YAxis tickLine={false} axisLine={false} />
+              <XAxis dataKey="label" tickLine={false} axisLine={false} />
+              <YAxis allowDecimals={false} tickLine={false} axisLine={false} />
               <Tooltip />
-              <Line type="monotone" dataKey="calls" stroke="#111827" strokeWidth={3} dot={false} />
-              <Line type="monotone" dataKey="answered" stroke="#6b7280" strokeWidth={3} dot={false} />
-              <Line type="monotone" dataKey="conversions" stroke="#f59e0b" strokeWidth={3} dot={false} />
+              <Line type="monotone" dataKey="count" stroke="#111827" strokeWidth={3} dot={false} />
             </LineChart>
           </ResponsiveContainer>
         </ChartCard>
 
-        <ChartCard title="Call outcomes" description="Outcome distribution across all agents">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie data={callOutcomes} dataKey="value" nameKey="name" innerRadius={62} outerRadius={98} paddingAngle={4}>
-                {callOutcomes.map((entry, index) => (
-                  <Cell key={entry.name} fill={COLORS[index % COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip />
-            </PieChart>
-          </ResponsiveContainer>
+        <ChartCard title="Call outcomes" description="Distribution by status">
+          {outcomes.length === 0 ? (
+            <div className="grid h-full place-items-center text-sm text-gray-400">No call data yet</div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={outcomes} dataKey="count" nameKey="status" innerRadius={62} outerRadius={98} paddingAngle={4}>
+                  {outcomes.map((entry, index) => (
+                    <Cell key={entry.status} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
         </ChartCard>
 
-        <ChartCard title="Revenue analytics" description="Attributed revenue by campaign">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={revenueAnalytics}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
-              <XAxis dataKey="campaign" tickLine={false} axisLine={false} />
-              <YAxis tickLine={false} axisLine={false} />
-              <Tooltip />
-              <Bar dataKey="revenue" fill="#111827" radius={[8, 8, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
+        <ChartCard title="Calls this week" description="Total received in the last 7 days">
+          <div className="grid h-full place-items-center">
+            <div className="text-center">
+              <p className="text-6xl font-semibold tracking-tight text-gray-950">{loading ? "…" : (calls.last7Days ?? 0)}</p>
+              <p className="mt-2 text-sm text-gray-500">{calls.active ?? 0} active right now</p>
+            </div>
+          </div>
         </ChartCard>
       </section>
 
       <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-gray-950">Recent activity</h2>
-          <Button variant="secondary">Export CSV</Button>
-        </div>
-        <DataTable columns={columns} rows={recentActivity} />
+        <h2 className="text-lg font-semibold text-gray-950">Recent calls</h2>
+        <DataTable columns={columns} rows={recent} loading={loading} emptyTitle="No calls yet" />
       </section>
     </div>
   );
-}
-
-function toneFor(status) {
-  if (["Converted", "Transferred"].includes(status)) return "success";
-  if (["Follow-up", "Interested"].includes(status)) return "warning";
-  if (status === "No Answer") return "neutral";
-  return "danger";
 }

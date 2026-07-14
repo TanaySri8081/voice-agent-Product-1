@@ -1,19 +1,27 @@
+import asyncio
 import logging
+from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.config.settings import settings
 from backend.services.db import get_db
+from backend.services.limiter import limiter
 from backend.services.auth_service import (
     get_password_hash,
     verify_password,
     create_access_token,
     decode_access_token,
+    generate_token,
+    hash_token,
 )
-from backend.models import User, Tenant
+from backend.services.email import send_email
+from backend.models import User, Tenant, PasswordResetToken, PhoneNumber
 from backend.schemas.auth import UserRegister, UserLogin
 from backend.utils.helpers import api_response, serialize_model, to_uuid
 
@@ -60,7 +68,8 @@ def require_roles(allowed_roles: list):
 
 
 @router.post("/register")
-async def register(payload: UserRegister, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def register(request: Request, payload: UserRegister, db: AsyncSession = Depends(get_db)):
     # Check if user already exists
     existing = await db.execute(select(User).where(User.email == payload.email))
     if existing.scalar_one_or_none():
@@ -85,6 +94,8 @@ async def register(payload: UserRegister, db: AsyncSession = Depends(get_db)):
         clinic_id = tenant.id
         if did_val:
             logger.info(f"Registered clinic {clinic_name} with DID {did_val}")
+            pn = PhoneNumber(clinic_id=clinic_id, number=did_val, label="Primary DID", status="active")
+            db.add(pn)
 
     # Create the user
     user = User(
@@ -118,7 +129,8 @@ async def register(payload: UserRegister, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login")
-async def login(payload: UserLogin, db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/minute")
+async def login(request: Request, payload: UserLogin, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == payload.email))
     user = result.scalar_one_or_none()
     if not user:
@@ -151,3 +163,94 @@ async def get_me(current_user: dict = Depends(get_current_user)):
         "clinic_id": current_user.get("clinic_id"),
     }
     return api_response(success=True, message="Current user fetched successfully", data=user_response)
+
+
+class ChangePassword(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=6)
+
+
+class ProfileUpdate(BaseModel):
+    name: str = Field(..., min_length=1)
+
+
+class ForgotPassword(BaseModel):
+    email: EmailStr
+
+
+class ResetPassword(BaseModel):
+    token: str
+    new_password: str = Field(..., min_length=6)
+
+
+@router.put("/profile")
+async def update_profile(
+    payload: ProfileUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    user = (await db.execute(select(User).where(User.id == to_uuid(current_user["id"])))).scalar_one_or_none()
+    if not user:
+        return api_response(success=False, message="User not found", status_code=404)
+    user.name = payload.name.strip()
+    await db.commit()
+    return api_response(success=True, message="Profile updated", data={"name": user.name})
+
+
+@router.post("/change-password")
+async def change_password(
+    payload: ChangePassword,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    user = (await db.execute(select(User).where(User.id == to_uuid(current_user["id"])))).scalar_one_or_none()
+    if not user:
+        return api_response(success=False, message="User not found", status_code=404)
+    if not verify_password(payload.current_password, user.password_hash):
+        return api_response(success=False, message="Current password is incorrect", status_code=400)
+    user.password_hash = get_password_hash(payload.new_password)
+    await db.commit()
+    return api_response(success=True, message="Password changed successfully")
+
+
+@router.post("/forgot-password")
+@limiter.limit("5/minute")
+async def forgot_password(request: Request, payload: ForgotPassword, db: AsyncSession = Depends(get_db)):
+    user = (await db.execute(select(User).where(User.email == payload.email))).scalar_one_or_none()
+    if user:
+        raw = generate_token()
+        db.add(PasswordResetToken(
+            user_id=user.id,
+            token_hash=hash_token(raw),
+            purpose="reset",
+            expires_at=datetime.utcnow() + timedelta(hours=1),
+        ))
+        await db.commit()
+        link = f"{settings.APP_BASE_URL}/reset-password?token={raw}"
+        await asyncio.to_thread(
+            send_email,
+            user.email,
+            "Reset your VoxPilot password",
+            f"Use this link to reset your password (valid for 1 hour):\n\n{link}\n\n"
+            "If you didn't request this, you can safely ignore this email.",
+        )
+    # Anti-enumeration: identical response whether or not the email exists.
+    return api_response(success=True, message="If that email is registered, a reset link has been sent.")
+
+
+@router.post("/reset-password")
+@limiter.limit("10/minute")
+async def reset_password(request: Request, payload: ResetPassword, db: AsyncSession = Depends(get_db)):
+    token_hash = hash_token(payload.token)
+    row = (await db.execute(
+        select(PasswordResetToken).where(PasswordResetToken.token_hash == token_hash)
+    )).scalar_one_or_none()
+    if not row or row.used_at is not None or row.expires_at < datetime.utcnow():
+        return api_response(success=False, message="This link is invalid or has expired.", status_code=400)
+    user = (await db.execute(select(User).where(User.id == row.user_id))).scalar_one_or_none()
+    if not user:
+        return api_response(success=False, message="This link is invalid or has expired.", status_code=400)
+    user.password_hash = get_password_hash(payload.new_password)
+    row.used_at = datetime.utcnow()
+    await db.commit()
+    return api_response(success=True, message="Password set successfully. You can now sign in.")

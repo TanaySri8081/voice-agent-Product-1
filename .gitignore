@@ -25,3 +25,6 @@ yarn-error.log*
 # IDE settings
 .vscode/
 .idea/
+
+# Runtime logs
+*.log

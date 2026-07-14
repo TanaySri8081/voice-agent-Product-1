@@ -2,14 +2,16 @@ import {
   BarChart3,
   BookOpen,
   Bot,
+  CalendarCheck,
   CreditCard,
   Gauge,
   Headphones,
   ListChecks,
-  Megaphone,
   Phone,
   Settings,
   Users,
+  UserCog,
+  UsersRound,
   X,
   LogOut,
 } from "lucide-react";
@@ -19,15 +21,17 @@ import { useAuthStore } from "../store/authStore";
 const items = [
   { label: "Dashboard", path: "/dashboard", icon: Gauge },
   { label: "AI Agents", path: "/agents", icon: Bot },
-  { label: "Campaigns", path: "/campaigns", icon: Megaphone },
   { label: "Contacts", path: "/contacts", icon: Users },
   { label: "Live Calls", path: "/calls/live", icon: Headphones },
   { label: "Call Logs", path: "/call-logs", icon: ListChecks },
+  { label: "Appointments", path: "/appointments", icon: CalendarCheck },
   { label: "Analytics", path: "/analytics", icon: BarChart3 },
   { label: "Knowledge Base", path: "/knowledge-base", icon: BookOpen },
   { label: "Phone Numbers", path: "/phone-numbers", icon: Phone },
   { label: "Billing", path: "/billing", icon: CreditCard },
+  { label: "Team", path: "/team", icon: UsersRound },
   { label: "Settings", path: "/settings", icon: Settings },
+  { label: "Account", path: "/account", icon: UserCog },
 ];
 
 export default function Sidebar({ open, onClose }) {
@@ -58,7 +62,7 @@ export default function Sidebar({ open, onClose }) {
             </div>
             <div>
               <p className="text-sm font-semibold text-gray-950">VoxPilot AI</p>
-              <p className="text-xs text-gray-500">Outbound voice ops</p>
+              <p className="text-xs text-gray-500">Inbound reception</p>
             </div>
           </div>
           <button className="rounded-xl p-2 text-gray-500 hover:bg-gray-100 lg:hidden" onClick={onClose}>
@@ -99,7 +103,7 @@ export default function Sidebar({ open, onClose }) {
             SIP trunk healthy
           </div>
           <p className="mt-2 text-xs leading-5 text-gray-500">
-            5 campaigns active. 18 agents standing by for live transfers.
+            AI receptionist online and ready to answer inbound calls and route live transfers.
           </p>
         </div>
       </aside>

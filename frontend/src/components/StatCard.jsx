@@ -16,8 +16,12 @@ export default function StatCard({ title, value, change, icon: Icon, tone = "dar
         </div>
       </div>
       <div className={`mt-5 flex items-center gap-2 text-sm ${positive ? "text-emerald-500" : "text-red-500"}`}>
-        {positive ? <ArrowUpRight className="h-4 w-4" /> : <ArrowDownRight className="h-4 w-4" />}
-        <span>{change} vs last period</span>
+        {change ? (
+          <>
+            {positive ? <ArrowUpRight className="h-4 w-4" /> : <ArrowDownRight className="h-4 w-4" />}
+            <span>{change} vs last period</span>
+          </>
+        ) : null}
       </div>
     </div>
   );
