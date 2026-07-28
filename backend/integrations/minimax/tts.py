@@ -73,8 +73,15 @@ async def stream_minimax_tts_pcm(text: str, voice: str = None, language_boost: s
                         try:
                             data_str = line[5:].strip()
                             data_json = json.loads(data_str)
-                            
-                            hex_data = data_json.get("data", "")
+
+                            # In the t2a_v2 stream the audio hex lives at
+                            # data.audio (a nested object), not data itself.
+                            chunk = data_json.get("data")
+                            hex_data = ""
+                            if isinstance(chunk, dict):
+                                hex_data = chunk.get("audio", "") or ""
+                            elif isinstance(chunk, str):
+                                hex_data = chunk
                             if hex_data:
                                 pcm_bytes = bytes.fromhex(hex_data)
                                 yield pcm_bytes

@@ -3,9 +3,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy import or_
+
 from backend.services.db import get_db
 from backend.routes.auth import get_current_user
-from backend.models import Patient
+from backend.models import Patient, Appointment, CallLog
 from backend.schemas.patient import PatientCreate
 from backend.utils.helpers import api_response, serialize_model, serialize_models, to_uuid
 
@@ -83,6 +85,49 @@ async def get_patient(
         success=True,
         message="Patient fetched successfully",
         data=serialize_model(patient),
+    )
+
+
+@router.get("/{patient_id}/detail")
+async def get_patient_detail(
+    patient_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """A contact with their full history: appointments + calls."""
+    clinic_id = to_uuid(current_user.get("clinic_id"))
+    pid = to_uuid(patient_id)
+    if pid is None or clinic_id is None:
+        return api_response(success=False, message="Contact not found", status_code=404)
+
+    patient = (await db.execute(
+        select(Patient).where(Patient.id == pid, Patient.clinic_id == clinic_id)
+    )).scalar_one_or_none()
+    if not patient:
+        return api_response(success=False, message="Contact not found", status_code=404)
+
+    # Appointments linked either by stored patient_id or by matching phone.
+    appts = (await db.execute(
+        select(Appointment).where(
+            Appointment.clinic_id == clinic_id,
+            or_(Appointment.patient_id == str(pid), Appointment.phone == patient.phone),
+        ).order_by(Appointment.appointment_at.desc(), Appointment.created_at.desc())
+    )).scalars().all()
+
+    # Calls from this contact's phone number.
+    calls = (await db.execute(
+        select(CallLog).where(CallLog.clinic_id == clinic_id, CallLog.phone == patient.phone)
+        .order_by(CallLog.created_at.desc()).limit(50)
+    )).scalars().all()
+
+    return api_response(
+        success=True,
+        message="Contact detail fetched",
+        data={
+            "contact": serialize_model(patient),
+            "appointments": serialize_models(appts),
+            "calls": serialize_models(calls),
+        },
     )
 
 

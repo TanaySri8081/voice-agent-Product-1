@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends
@@ -7,14 +8,18 @@ from slowapi.errors import RateLimitExceeded
 
 from backend.services.db import connect_to_db, close_db_connection
 from backend.services.limiter import limiter
+from backend.jobs.reminder_worker import reminder_loop
 from backend.routes.auth import router as auth_router
 from backend.routes.calls import router as calls_router
 from backend.routes.patients import router as patients_router
 from backend.routes.appointments import router as appointments_router
 from backend.routes.clinics import router as clinics_router
-from backend.routes.team import router as team_router
 from backend.routes.phone_numbers import router as phone_numbers_router
 from backend.routes.stats import router as stats_router
+from backend.routes.templates import router as templates_router
+from backend.routes.billing import router as billing_router
+from backend.routes.admin import router as admin_router
+from backend.routes.messages import router as messages_router
 from backend.websocket.handler import router as ws_router
 from backend.config.settings import settings
 
@@ -27,15 +32,21 @@ logger = logging.getLogger("app-bootstrap")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: connect to the database (inbound-only; no outbound scheduler)
+    # Startup: connect to the DB and launch the appointment-reminder worker.
     await connect_to_db()
+    reminder_task = asyncio.create_task(reminder_loop())
     yield
-    # Shutdown: close connection
+    # Shutdown: stop the worker and close the connection.
+    reminder_task.cancel()
+    try:
+        await reminder_task
+    except asyncio.CancelledError:
+        pass
     await close_db_connection()
 
 app = FastAPI(
-    title="VoxPilot AI - Healthcare Calling Receptionist",
-    description="Multi-tenant Voice AI SaaS Receptionist for Doctors, Dentists, and Clinics.",
+    title="VoxPilot AI - Voice Receptionist",
+    description="Multi-tenant Voice AI receptionist for businesses across industries (clinics, real estate, hospitality, salons, services, and more).",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -59,9 +70,12 @@ app.include_router(calls_router, prefix="/api")
 app.include_router(patients_router, prefix="/api")
 app.include_router(appointments_router, prefix="/api")
 app.include_router(clinics_router, prefix="/api")
-app.include_router(team_router, prefix="/api")
 app.include_router(phone_numbers_router, prefix="/api")
 app.include_router(stats_router, prefix="/api")
+app.include_router(templates_router, prefix="/api")
+app.include_router(billing_router, prefix="/api")
+app.include_router(admin_router, prefix="/api")
+app.include_router(messages_router, prefix="/api")
 
 # Mount Websocket Routing
 app.include_router(ws_router)

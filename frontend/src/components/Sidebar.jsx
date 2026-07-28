@@ -1,41 +1,74 @@
+import { useEffect, useState } from "react";
 import {
-  BarChart3,
-  BookOpen,
   Bot,
   CalendarCheck,
   CreditCard,
   Gauge,
   Headphones,
-  ListChecks,
-  Phone,
+  MessageCircle,
   Settings,
+  ShieldCheck,
   Users,
   UserCog,
-  UsersRound,
   X,
   LogOut,
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
+import api from "../lib/api";
 import { useAuthStore } from "../store/authStore";
+import { useLabels } from "../store/clinicStore";
 
 const items = [
   { label: "Dashboard", path: "/dashboard", icon: Gauge },
-  { label: "AI Agents", path: "/agents", icon: Bot },
+  { label: "Calls", path: "/calls", icon: Headphones },
   { label: "Contacts", path: "/contacts", icon: Users },
-  { label: "Live Calls", path: "/calls/live", icon: Headphones },
-  { label: "Call Logs", path: "/call-logs", icon: ListChecks },
   { label: "Appointments", path: "/appointments", icon: CalendarCheck },
-  { label: "Analytics", path: "/analytics", icon: BarChart3 },
-  { label: "Knowledge Base", path: "/knowledge-base", icon: BookOpen },
-  { label: "Phone Numbers", path: "/phone-numbers", icon: Phone },
+  { label: "Messages", path: "/messages", icon: MessageCircle },
+  { label: "Agent Setup", path: "/setup", icon: Settings },
   { label: "Billing", path: "/billing", icon: CreditCard },
-  { label: "Team", path: "/team", icon: UsersRound },
-  { label: "Settings", path: "/settings", icon: Settings },
   { label: "Account", path: "/account", icon: UserCog },
 ];
 
 export default function Sidebar({ open, onClose }) {
   const logout = useAuthStore((state) => state.logout);
+  const user = useAuthStore((state) => state.user);
+  const labels = useLabels();
+
+  // Real "connected numbers" status (replaces the old hardcoded SIP badge).
+  // Refreshes periodically + on window focus so it reflects numbers you connect
+  // on the Setup page without needing a full reload.
+  const [numbers, setNumbers] = useState(null); // null = loading
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      api
+        .get("/phone-numbers/")
+        .then((r) => {
+          if (!cancelled) setNumbers(r.data?.success ? r.data.data || [] : []);
+        })
+        .catch(() => {
+          if (!cancelled) setNumbers([]);
+        });
+    };
+    load();
+    const id = setInterval(load, 45000);
+    window.addEventListener("focus", load);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+      window.removeEventListener("focus", load);
+    };
+  }, []);
+  const totalNumbers = (numbers || []).length;
+  const activeNumbers = (numbers || []).filter((n) => n.status === "active").length;
+
+  // Nav labels that adapt to the tenant's industry.
+  const labelOverrides = { "/contacts": labels.contacts, "/appointments": labels.bookings };
+
+  // Platform admins get an extra Admin entry (server also enforces access).
+  const navItems = user?.is_superadmin
+    ? [...items, { label: "Admin", path: "/admin", icon: ShieldCheck }]
+    : items;
 
   const handleLogout = () => {
     logout();
@@ -71,7 +104,7 @@ export default function Sidebar({ open, onClose }) {
         </div>
 
         <nav className="mt-8 space-y-1">
-          {items.map((item) => (
+          {navItems.map((item) => (
             <NavLink
               key={item.path}
               to={item.path}
@@ -85,7 +118,7 @@ export default function Sidebar({ open, onClose }) {
               }
             >
               <item.icon className="h-4 w-4" />
-              {item.label}
+              {labelOverrides[item.path] || item.label}
             </NavLink>
           ))}
           <button
@@ -98,13 +131,38 @@ export default function Sidebar({ open, onClose }) {
         </nav>
 
         <div className="mt-auto rounded-3xl border border-gray-200 bg-gray-50 p-4">
-          <div className="flex items-center gap-2 text-sm font-semibold text-gray-950">
-            <span className="status-dot bg-emerald-500" />
-            SIP trunk healthy
-          </div>
-          <p className="mt-2 text-xs leading-5 text-gray-500">
-            AI receptionist online and ready to answer inbound calls and route live transfers.
-          </p>
+          {numbers === null ? (
+            <div className="flex items-center gap-2 text-sm text-gray-400">
+              <span className="status-dot bg-gray-300" />
+              Checking numbers…
+            </div>
+          ) : totalNumbers > 0 ? (
+            <>
+              <div className="flex items-center gap-2 text-sm font-semibold text-gray-950">
+                <span className={`status-dot ${activeNumbers > 0 ? "bg-emerald-500" : "bg-amber-500"}`} />
+                {totalNumbers} number{totalNumbers === 1 ? "" : "s"} connected
+              </div>
+              <p className="mt-2 text-xs leading-5 text-gray-500">
+                {activeNumbers > 0
+                  ? `${activeNumbers} active — calls are answered by your AI receptionist.`
+                  : "All numbers are inactive. Activate one in Agent Setup to receive calls."}
+              </p>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 text-sm font-semibold text-gray-950">
+                <span className="status-dot bg-amber-500" />
+                No number connected
+              </div>
+              <NavLink
+                to="/setup"
+                onClick={onClose}
+                className="mt-2 inline-block text-xs font-medium text-gray-900 hover:underline"
+              >
+                Connect a number in Agent Setup →
+              </NavLink>
+            </>
+          )}
         </div>
       </aside>
     </>

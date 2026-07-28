@@ -2,12 +2,14 @@ import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 import { Bot, Loader2 } from "lucide-react";
+import { INDUSTRIES, DEFAULT_INDUSTRY } from "../lib/industries";
 
 export default function Register() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [clinicName, setClinicName] = useState("");
+  const [industry, setIndustry] = useState(DEFAULT_INDUSTRY);
   const [did, setDid] = useState("");
   const { register, error, loading } = useAuthStore();
   const navigate = useNavigate();
@@ -15,7 +17,7 @@ export default function Register() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!email || !password || !name || !clinicName) return;
-    const success = await register(email, password, name, clinicName, did);
+    const success = await register(email, password, name, clinicName, did, industry);
     if (success) {
       navigate("/dashboard");
     }
@@ -29,10 +31,10 @@ export default function Register() {
             <Bot className="h-6 w-6" />
           </div>
           <h2 className="mt-6 text-center text-3xl font-semibold tracking-tight text-gray-950">
-            Onboard your clinic
+            Onboard your business
           </h2>
           <p className="mt-2 text-center text-sm text-gray-500">
-            Get started with VoxPilot AI Medical Receptionist
+            Get started with your VoxPilot AI voice receptionist
           </p>
         </div>
 
@@ -45,8 +47,29 @@ export default function Register() {
         <form className="mt-8 space-y-4" onSubmit={handleSubmit}>
           <div className="space-y-3">
             <div>
+              <label htmlFor="industry" className="text-sm font-medium text-gray-700">
+                Industry
+              </label>
+              <select
+                id="industry"
+                name="industry"
+                required
+                className="mt-1 block w-full rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 focus:border-gray-950 focus:outline-none focus:ring-1 focus:ring-gray-950 sm:text-sm"
+                value={industry}
+                onChange={(e) => setIndustry(e.target.value)}
+              >
+                {INDUSTRIES.map((opt) => (
+                  <option key={opt.key} value={opt.key}>{opt.label}</option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-gray-400">
+                We'll set up your AI assistant with a starting script for this industry — you can edit it anytime.
+              </p>
+            </div>
+
+            <div>
               <label htmlFor="clinic-name" className="text-sm font-medium text-gray-700">
-                Clinic / Hospital Name
+                Business Name
               </label>
               <input
                 id="clinic-name"
@@ -54,7 +77,7 @@ export default function Register() {
                 type="text"
                 required
                 className="mt-1 block w-full rounded-2xl border border-gray-200 px-4 py-2.5 text-gray-900 placeholder-gray-400 focus:border-gray-950 focus:outline-none focus:ring-1 focus:ring-gray-950 sm:text-sm"
-                placeholder="Apex Dental Care"
+                placeholder="e.g. Apex Dental Care"
                 value={clinicName}
                 onChange={(e) => setClinicName(e.target.value)}
               />
@@ -77,7 +100,7 @@ export default function Register() {
 
             <div>
               <label htmlFor="doctor-name" className="text-sm font-medium text-gray-700">
-                Doctor Name
+                Your Name
               </label>
               <input
                 id="doctor-name"
@@ -85,7 +108,7 @@ export default function Register() {
                 type="text"
                 required
                 className="mt-1 block w-full rounded-2xl border border-gray-200 px-4 py-2.5 text-gray-900 placeholder-gray-400 focus:border-gray-950 focus:outline-none focus:ring-1 focus:ring-gray-950 sm:text-sm"
-                placeholder="Dr. Shreyas Raj"
+                placeholder="e.g. Shreyas Raj"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
               />
@@ -101,7 +124,7 @@ export default function Register() {
                 type="email"
                 required
                 className="mt-1 block w-full rounded-2xl border border-gray-200 px-4 py-2.5 text-gray-900 placeholder-gray-400 focus:border-gray-950 focus:outline-none focus:ring-1 focus:ring-gray-950 sm:text-sm"
-                placeholder="doctor@apex.com"
+                placeholder="you@business.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
               />

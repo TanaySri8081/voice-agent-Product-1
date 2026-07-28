@@ -24,6 +24,7 @@ from sqlalchemy import (
     Integer,
     Text,
     DateTime,
+    Boolean,
     ForeignKey,
     UniqueConstraint,
 )
@@ -41,6 +42,30 @@ class Tenant(Base):
     id = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = mapped_column(String(255), nullable=False)
     subscription = mapped_column(String(50), nullable=False, default="free")
+    # How this tenant books: "time" (fixed time slots) or "token" (daily queue
+    # number — common for Indian doctor clinics).
+    booking_mode = mapped_column(String(20), nullable=False, default="time")
+    # "Now serving" state for token mode (per-day; resets when the date changes).
+    queue_current_number = mapped_column(Integer, nullable=False, default=0)
+    queue_current_date = mapped_column(String(10), nullable=True)  # YYYY-MM-DD (naive local)
+    # Optional per-tenant monthly call allowance override. When set (any positive
+    # int), it wins over the subscription plan's default allowance — used for
+    # custom/enterprise deals. See services/plans.py.
+    monthly_call_limit = mapped_column(Integer, nullable=True)
+    # Vertical this tenant operates in (clinic, real_estate, restaurant, ...).
+    # Drives the starter template picked at sign-up; see services/industry_templates.py.
+    industry = mapped_column(String(50), nullable=True)
+    # Where new-booking alert emails are sent. Falls back to clinic owner emails
+    # when empty. See services/notifications.py.
+    notify_email = mapped_column(String(255), nullable=True)
+    # Per-tenant WhatsApp (Meta Cloud API) config. When set, this tenant sends
+    # from its OWN number; otherwise it falls back to the platform .env values.
+    # access_token is a secret — masked in API responses, never returned raw.
+    whatsapp_phone_number_id = mapped_column(String(64), nullable=True)
+    whatsapp_access_token = mapped_column(Text, nullable=True)
+    whatsapp_template_lang = mapped_column(String(20), nullable=True)
+    whatsapp_confirm_template = mapped_column(String(100), nullable=True)
+    whatsapp_reminder_template = mapped_column(String(100), nullable=True)
     did = mapped_column(String(50), nullable=True, unique=True)
     system_prompt = mapped_column(Text, nullable=True)
     initial_greeting = mapped_column(Text, nullable=True)
@@ -48,7 +73,6 @@ class Tenant(Base):
     voice = mapped_column(String(100), nullable=True)
     language = mapped_column(String(20), nullable=True)
     llm_model = mapped_column(String(100), nullable=True)
-    transfer_number = mapped_column(String(50), nullable=True)
     created_at = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
 
@@ -106,8 +130,20 @@ class Appointment(Base):
     # Stored as text: may be a patient UUID string or "new" for unknown callers.
     patient_id = mapped_column(String(64), nullable=True)
     patient_name = mapped_column(String(255), nullable=False)
-    # Kept as text to preserve existing ISO/human-string semantics.
+    # Human-readable display string (kept for back-compat / free-text bookings).
     appointment_date = mapped_column(Text, nullable=False)
+    # Structured start time (naive local wall-time) used for double-booking
+    # detection, sorting, and reminders. Nullable for legacy free-text rows.
+    appointment_at = mapped_column(DateTime, nullable=True, index=True)
+    # Slot length in minutes; used for overlap/conflict detection.
+    duration_min = mapped_column(Integer, nullable=False, default=30)
+    # Token/queue mode: the assigned daily number and the day it belongs to.
+    token_number = mapped_column(Integer, nullable=True)
+    token_date = mapped_column(String(10), nullable=True)  # YYYY-MM-DD (naive local)
+    # Customer phone for WhatsApp confirmation/reminder (from caller or the form).
+    phone = mapped_column(String(50), nullable=True)
+    # Set once the reminder has been sent, to avoid duplicate reminders.
+    reminder_sent = mapped_column(Boolean, nullable=False, default=False)
     reason = mapped_column(Text, nullable=True)
     status = mapped_column(String(50), nullable=False, default="scheduled", index=True)
     created_at = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
@@ -168,4 +204,69 @@ class PhoneNumber(Base):
     created_at = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
 
-__all__ = ["Base", "Tenant", "User", "Patient", "Appointment", "CallLog", "PasswordResetToken", "PhoneNumber"]
+class UpgradeRequest(Base):
+    __tablename__ = "upgrade_requests"
+
+    id = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    clinic_id = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # The user who requested it (stored as text id; informational, no hard FK).
+    requested_by = mapped_column(String(64), nullable=True)
+    current_plan = mapped_column(String(50), nullable=True)
+    requested_plan = mapped_column(String(50), nullable=False)
+    note = mapped_column(Text, nullable=True)
+    status = mapped_column(String(20), nullable=False, default="pending", index=True)  # pending | approved | rejected
+    created_at = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    resolved_at = mapped_column(DateTime, nullable=True)
+
+
+class Payment(Base):
+    __tablename__ = "payments"
+
+    id = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    clinic_id = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    plan_key = mapped_column(String(50), nullable=False)
+    amount_inr = mapped_column(Integer, nullable=False, default=0)
+    currency = mapped_column(String(10), nullable=False, default="INR")
+    # Razorpay identifiers. order_id is created first; payment_id is filled on success.
+    razorpay_order_id = mapped_column(String(64), nullable=False, unique=True, index=True)
+    razorpay_payment_id = mapped_column(String(64), nullable=True)
+    status = mapped_column(String(20), nullable=False, default="created", index=True)  # created | paid | failed
+    created_at = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    paid_at = mapped_column(DateTime, nullable=True)
+
+
+class WhatsAppMessage(Base):
+    __tablename__ = "whatsapp_messages"
+
+    id = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    clinic_id = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    to_phone = mapped_column(String(50), nullable=True)
+    kind = mapped_column(String(20), nullable=False, default="confirmation")  # confirmation | reminder
+    template = mapped_column(String(100), nullable=True)
+    # Readable preview of what was sent (templates live in Meta, so this is our summary).
+    body = mapped_column(Text, nullable=True)
+    status = mapped_column(String(20), nullable=False, default="sent")  # sent | failed
+    error = mapped_column(Text, nullable=True)
+    created_at = mapped_column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
+__all__ = [
+    "Base", "Tenant", "User", "Patient", "Appointment", "CallLog",
+    "PasswordResetToken", "PhoneNumber", "UpgradeRequest", "Payment",
+    "WhatsAppMessage",
+]

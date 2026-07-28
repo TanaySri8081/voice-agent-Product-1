@@ -51,7 +51,7 @@ export default function Login() {
                 type="email"
                 required
                 className="mt-1 block w-full rounded-2xl border border-gray-200 px-4 py-3 text-gray-900 placeholder-gray-400 focus:border-gray-950 focus:outline-none focus:ring-1 focus:ring-gray-950 sm:text-sm"
-                placeholder="doctor@clinic.com"
+                placeholder="you@business.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
               />
@@ -97,7 +97,7 @@ export default function Login() {
         <p className="text-center text-sm text-gray-500">
           Don't have an account?{" "}
           <Link to="/register" className="font-semibold text-gray-950 hover:underline">
-            Register your clinic
+            Register your business
           </Link>
         </p>
       </div>

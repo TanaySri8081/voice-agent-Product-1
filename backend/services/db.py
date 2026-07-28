@@ -22,7 +22,7 @@ import ssl
 import uuid
 from urllib.parse import urlsplit, unquote
 
-from sqlalchemy import URL
+from sqlalchemy import URL, text
 from sqlalchemy.ext.asyncio import (
     create_async_engine,
     async_sessionmaker,
@@ -38,6 +38,30 @@ logger = logging.getLogger("db-service")
 # can still boot (and surface a clear 503) when the DB isn't configured.
 engine = None
 AsyncSessionLocal = None
+
+# Additive, idempotent column migrations applied on startup (create_all only
+# creates missing tables, it never ALTERs existing ones). Keep each statement
+# safe to run repeatedly.
+_COLUMN_MIGRATIONS = [
+    "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS industry varchar(50)",
+    "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS monthly_call_limit integer",
+    "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS notify_email varchar(255)",
+    "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS whatsapp_phone_number_id varchar(64)",
+    "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS whatsapp_access_token text",
+    "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS whatsapp_template_lang varchar(20)",
+    "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS whatsapp_confirm_template varchar(100)",
+    "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS whatsapp_reminder_template varchar(100)",
+    "ALTER TABLE appointments ADD COLUMN IF NOT EXISTS appointment_at timestamp",
+    "ALTER TABLE appointments ADD COLUMN IF NOT EXISTS duration_min integer NOT NULL DEFAULT 30",
+    "ALTER TABLE appointments ADD COLUMN IF NOT EXISTS phone varchar(50)",
+    "ALTER TABLE appointments ADD COLUMN IF NOT EXISTS reminder_sent boolean NOT NULL DEFAULT false",
+    # Token/queue appointment mode (per-tenant booking_mode + daily "now serving").
+    "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS booking_mode varchar(20) NOT NULL DEFAULT 'time'",
+    "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS queue_current_number integer NOT NULL DEFAULT 0",
+    "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS queue_current_date varchar(10)",
+    "ALTER TABLE appointments ADD COLUMN IF NOT EXISTS token_number integer",
+    "ALTER TABLE appointments ADD COLUMN IF NOT EXISTS token_date varchar(10)",
+]
 
 
 def get_sessionmaker():
@@ -128,6 +152,10 @@ async def connect_to_db():
         # Idempotently create any missing tables. Existing tables are untouched.
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            # create_all does NOT ALTER existing tables, so additive column
+            # migrations live here. Each must be idempotent (IF NOT EXISTS).
+            for ddl in _COLUMN_MIGRATIONS:
+                await conn.execute(text(ddl))
 
         logger.info("Connected to Postgres (Supabase) and ensured schema exists.")
     except Exception as e:

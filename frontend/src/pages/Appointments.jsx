@@ -5,8 +5,10 @@ import DataTable from "../components/DataTable";
 import Modal from "../components/Modal";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
+import { useLabels, useClinicStore } from "../store/clinicStore";
 
-const emptyForm = { patient_name: "", appointment_date: "", reason: "" };
+const emptyForm = { patient_name: "", phone: "", appointment_at: "", duration_min: 30, reason: "" };
+const DURATIONS = [15, 30, 45, 60, 90];
 
 function extractError(err) {
   const d = err?.response?.data;
@@ -26,18 +28,25 @@ function extractError(err) {
 
 const statusTone = (status) => {
   switch (status) {
-    case "completed":
-      return "success";
-    case "cancelled":
-      return "danger";
-    case "scheduled":
-      return "warning";
-    default:
-      return "neutral";
+    case "completed": return "success";
+    case "cancelled": return "danger";
+    case "scheduled": return "warning";
+    default: return "neutral";
   }
 };
 
+const fmtWhen = (row) => {
+  if (row.appointment_at) {
+    const d = new Date(row.appointment_at);
+    if (!Number.isNaN(d.getTime())) return d.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+  }
+  return row.appointment_date || "—";
+};
+
 export default function Appointments() {
+  const labels = useLabels();
+  const bookingMode = useClinicStore((s) => s.clinic?.booking_mode) || "time";
+  const isToken = bookingMode === "token";
   const [list, setList] = useState([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
@@ -47,9 +56,23 @@ export default function Appointments() {
   const [form, setForm] = useState(emptyForm);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
+  const [contacts, setContacts] = useState([]);
+  const [selectedContactId, setSelectedContactId] = useState("");
 
   const [banner, setBanner] = useState(null);
   const [busyId, setBusyId] = useState(null);
+
+  // Token/queue mode state ("Now serving" panel)
+  const [queue, setQueue] = useState({ current_number: 0, total_issued: 0 });
+  const [queueBusy, setQueueBusy] = useState(false);
+  const [setNum, setSetNum] = useState("");
+
+  // Reschedule modal
+  const [reRow, setReRow] = useState(null);
+  const [reAt, setReAt] = useState("");
+  const [reDur, setReDur] = useState(30);
+  const [reSubmitting, setReSubmitting] = useState(false);
+  const [reError, setReError] = useState("");
 
   const loadAppointments = useCallback(async () => {
     setLoading(true);
@@ -70,14 +93,78 @@ export default function Appointments() {
     }
   }, []);
 
+  const loadQueue = useCallback(async () => {
+    try {
+      const res = await api.get("/appointments/queue");
+      if (res.data?.success && res.data.data?.status) setQueue(res.data.data.status);
+    } catch {
+      /* ignore — panel just shows the last known values */
+    }
+  }, []);
+
   useEffect(() => {
     loadAppointments();
+    api.get("/patients/")
+      .then((r) => setContacts(r.data?.success ? r.data.data || [] : []))
+      .catch(() => setContacts([]));
   }, [loadAppointments]);
+
+  useEffect(() => {
+    if (isToken) loadQueue();
+  }, [isToken, loadQueue]);
+
+  const queueNext = async () => {
+    setQueueBusy(true);
+    try {
+      const res = await api.post("/appointments/queue/next");
+      if (res.data?.success && res.data.data) setQueue((q) => ({ ...q, ...res.data.data }));
+      else setBanner({ type: "error", text: res.data?.message || "Could not update the queue." });
+    } catch (err) {
+      setBanner({ type: "error", text: extractError(err) });
+    } finally {
+      setQueueBusy(false);
+    }
+  };
+
+  const queueSetTo = async (n) => {
+    setQueueBusy(true);
+    try {
+      const res = await api.post("/appointments/queue/set", { number: Number(n) || 0 });
+      if (res.data?.success && res.data.data) {
+        setQueue((q) => ({ ...q, ...res.data.data }));
+        setSetNum("");
+      } else {
+        setBanner({ type: "error", text: res.data?.message || "Could not update the queue." });
+      }
+    } catch (err) {
+      setBanner({ type: "error", text: extractError(err) });
+    } finally {
+      setQueueBusy(false);
+    }
+  };
+
+  const onSelectContact = (event) => {
+    const id = event.target.value;
+    setSelectedContactId(id);
+    if (id) {
+      const c = contacts.find((x) => String(x.id) === id);
+      if (c) setForm((prev) => ({ ...prev, patient_name: c.name || "", phone: c.phone || "" }));
+    } else {
+      setForm((prev) => ({ ...prev, patient_name: "", phone: "" }));
+    }
+  };
+
+  const openBooking = () => {
+    setFormError("");
+    setForm(emptyForm);
+    setSelectedContactId("");
+    setOpen(true);
+  };
 
   const filtered = useMemo(
     () =>
       list.filter((a) =>
-        `${a.patient_name} ${a.reason || ""} ${a.status}`.toLowerCase().includes(query.toLowerCase()),
+        `${a.patient_name} ${a.reason || ""} ${a.status} ${fmtWhen(a)}`.toLowerCase().includes(query.toLowerCase()),
       ),
     [query, list],
   );
@@ -86,32 +173,82 @@ export default function Appointments() {
 
   const submitAppointment = async () => {
     setFormError("");
-    if (!form.patient_name.trim() || !form.appointment_date.trim()) {
-      setFormError("Patient name and date/time are required.");
+    if (!form.patient_name.trim()) {
+      setFormError(isToken ? "Name is required." : "Name and date/time are required.");
+      return;
+    }
+    if (!isToken && !form.appointment_at) {
+      setFormError("Name and date/time are required.");
       return;
     }
     const payload = {
-      patient_id: "manual",
+      patient_id: selectedContactId || "manual",
       patient_name: form.patient_name.trim(),
-      appointment_date: form.appointment_date.trim(),
+      phone: form.phone.trim() || null,
       reason: form.reason.trim() || null,
       status: "scheduled",
     };
+    if (!isToken) {
+      payload.appointment_at = form.appointment_at; // datetime-local value = naive local wall time
+      payload.duration_min = Number(form.duration_min) || 30;
+    }
     setSubmitting(true);
     try {
       const res = await api.post("/appointments/", payload);
       if (res.data && res.data.success) {
         setOpen(false);
         setForm(emptyForm);
-        setBanner({ type: "success", text: `Appointment booked for ${payload.patient_name}.` });
+        setSelectedContactId("");
+        const tokenNo = res.data.data?.token_number;
+        setBanner({
+          type: "success",
+          text: isToken && tokenNo != null
+            ? `Token #${tokenNo} given to ${payload.patient_name}.`
+            : `${labels.booking} booked for ${payload.patient_name}.`,
+        });
         loadAppointments();
+        if (isToken) loadQueue();
       } else {
-        setFormError((res.data && res.data.message) || "Could not book the appointment.");
+        setFormError((res.data && res.data.message) || "Could not book.");
       }
     } catch (err) {
+      // A 409 means the slot overlaps an existing booking (time mode).
       setFormError(extractError(err));
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const openReschedule = (row) => {
+    setReError("");
+    setReRow(row);
+    setReAt(row.appointment_at ? String(row.appointment_at).slice(0, 16) : "");
+    setReDur(row.duration_min || 30);
+  };
+
+  const submitReschedule = async () => {
+    if (!reAt) {
+      setReError("Pick a new date & time.");
+      return;
+    }
+    setReSubmitting(true);
+    setReError("");
+    try {
+      const res = await api.put(`/appointments/${reRow.id}/reschedule`, {
+        appointment_at: reAt,
+        duration_min: Number(reDur) || 30,
+      });
+      if (res.data?.success) {
+        setReRow(null);
+        setBanner({ type: "success", text: `Rescheduled ${labels.booking.toLowerCase()} for ${reRow.patient_name}.` });
+        loadAppointments();
+      } else {
+        setReError(res.data?.message || "Could not reschedule.");
+      }
+    } catch (err) {
+      setReError(extractError(err));
+    } finally {
+      setReSubmitting(false);
     }
   };
 
@@ -121,7 +258,7 @@ export default function Appointments() {
     try {
       const res = await api.delete(`/appointments/${row.id}`);
       if (res.data && res.data.success) {
-        setBanner({ type: "success", text: `Cancelled appointment for ${row.patient_name}.` });
+        setBanner({ type: "success", text: `Cancelled ${labels.booking.toLowerCase()} for ${row.patient_name}.` });
         loadAppointments();
       } else {
         setBanner({ type: "error", text: (res.data && res.data.message) || "Could not cancel." });
@@ -133,38 +270,54 @@ export default function Appointments() {
     }
   };
 
-  const columns = [
-    { key: "patient_name", header: "Patient" },
-    { key: "appointment_date", header: "When" },
-    { key: "reason", header: "Reason", render: (row) => row.reason || "—" },
-    {
-      key: "status",
-      header: "Status",
-      render: (row) => <Badge tone={statusTone(row.status)}>{row.status}</Badge>,
-    },
-    {
-      key: "actions",
-      header: "Actions",
-      render: (row) =>
-        row.status === "cancelled" ? (
-          <span className="text-xs text-gray-400">—</span>
-        ) : (
+  const actionsColumn = {
+    key: "actions",
+    header: "Actions",
+    render: (row) =>
+      row.status === "cancelled" ? (
+        <span className="text-xs text-gray-400">—</span>
+      ) : (
+        <div className="flex gap-2">
+          {!isToken && (
+            <Button variant="secondary" size="sm" onClick={() => openReschedule(row)}>Reschedule</Button>
+          )}
           <Button variant="secondary" size="sm" disabled={busyId === row.id} onClick={() => cancelAppointment(row)}>
-            {busyId === row.id ? "Cancelling..." : "Cancel"}
+            {busyId === row.id ? "..." : "Cancel"}
           </Button>
-        ),
-    },
-  ];
+        </div>
+      ),
+  };
+
+  const columns = isToken
+    ? [
+        { key: "token_number", header: "Token", render: (row) => (row.token_number != null ? `#${row.token_number}` : "—") },
+        { key: "patient_name", header: "Name" },
+        { key: "reason", header: "Reason", render: (row) => row.reason || "—" },
+        { key: "status", header: "Status", render: (row) => <Badge tone={statusTone(row.status)}>{row.status}</Badge> },
+        actionsColumn,
+      ]
+    : [
+        { key: "patient_name", header: "Name" },
+        { key: "appointment_at", header: "When", render: (row) => fmtWhen(row) },
+        { key: "duration_min", header: "Length", render: (row) => `${row.duration_min || 30}m` },
+        { key: "reason", header: "Reason", render: (row) => row.reason || "—" },
+        { key: "status", header: "Status", render: (row) => <Badge tone={statusTone(row.status)}>{row.status}</Badge> },
+        actionsColumn,
+      ];
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-gray-950">Appointments</h1>
-          <p className="mt-2 text-sm text-gray-500">Appointments booked by the AI receptionist and your team.</p>
+          <h1 className="text-3xl font-semibold tracking-tight text-gray-950">{labels.bookings}</h1>
+          <p className="mt-2 text-sm text-gray-500">
+            {isToken
+              ? `${labels.bookings} by daily token number. Give walk-ins a token here, and advance "Now serving" as each patient is seen.`
+              : `${labels.bookings} booked by the AI receptionist and your team. Walk-ins can be added here — the AI won't double-book a taken slot.`}
+          </p>
         </div>
-        <Button onClick={() => { setFormError(""); setForm(emptyForm); setOpen(true); }}>
-          <CalendarPlus className="h-4 w-4" /> Book appointment
+        <Button onClick={openBooking}>
+          <CalendarPlus className="h-4 w-4" /> {isToken ? "Give token" : `Book ${labels.booking.toLowerCase()}`}
         </Button>
       </div>
 
@@ -184,29 +337,64 @@ export default function Appointments() {
       )}
 
       {!loading && !live && (
-        <p className="text-xs text-gray-400">Couldn't reach the backend. Sign in and ensure the API is running to see live appointments.</p>
+        <p className="text-xs text-gray-400">Couldn't reach the backend. Sign in and ensure the API is running to see live {labels.bookings.toLowerCase()}.</p>
+      )}
+
+      {isToken && (
+        <div className="panel rounded-3xl border border-gray-100 bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Now serving</p>
+              <p className="mt-1 text-5xl font-semibold tabular-nums text-gray-950">{queue.current_number || 0}</p>
+              <p className="mt-1 text-xs text-gray-400">
+                {queue.total_issued || 0} token{(queue.total_issued || 0) === 1 ? "" : "s"} issued today
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button onClick={queueNext} disabled={queueBusy}>Next patient</Button>
+              <Button variant="secondary" onClick={() => queueSetTo(0)} disabled={queueBusy}>Reset</Button>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min="0"
+                  className="w-20 rounded-xl border border-gray-200 px-3 py-2 text-sm focus:border-gray-950 focus:outline-none"
+                  placeholder="#"
+                  value={setNum}
+                  onChange={(e) => setSetNum(e.target.value)}
+                />
+                <Button variant="secondary" onClick={() => queueSetTo(setNum)} disabled={queueBusy || setNum === ""}>Set</Button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       <div className="panel flex flex-col gap-3 rounded-3xl p-4">
         <input
           className="w-full rounded-2xl border border-gray-200 px-3.5 py-2 text-sm outline-none focus:border-gray-950"
-          placeholder="Search by patient, reason, or status..."
+          placeholder="Search by name, reason, or status..."
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
       </div>
 
-      <DataTable columns={columns} rows={filtered} loading={loading} emptyTitle="No appointments yet" />
+      <DataTable columns={columns} rows={filtered} loading={loading} emptyTitle={`No ${labels.bookings.toLowerCase()} yet`} />
 
       <Modal
         open={open}
         onClose={() => setOpen(false)}
-        title="Book appointment"
-        description="Manually add an appointment. Patient name and date/time are required."
+        title={isToken ? "Give a token" : `Book ${labels.booking.toLowerCase()}`}
+        description={
+          isToken
+            ? "Add someone to today's queue — they get the next token number automatically."
+            : `Add a ${labels.booking.toLowerCase()} (e.g. a walk-in). If the slot is already taken you'll be asked to pick another.`
+        }
         footer={
           <div className="flex justify-end gap-3">
             <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={submitAppointment} disabled={submitting}>{submitting ? "Saving..." : "Book appointment"}</Button>
+            <Button onClick={submitAppointment} disabled={submitting}>
+              {submitting ? "Saving..." : isToken ? "Give token" : `Book ${labels.booking.toLowerCase()}`}
+            </Button>
           </div>
         }
       >
@@ -214,10 +402,67 @@ export default function Appointments() {
           <div className="mb-4 rounded-2xl border border-red-100 bg-red-50 p-3 text-sm text-red-800">{formError}</div>
         )}
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Patient name *" value={form.patient_name} onChange={updateField("patient_name")} placeholder="Jane Doe" />
-          <Field label="Date & time *" type="datetime-local" value={form.appointment_date} onChange={updateField("appointment_date")} />
           <div className="sm:col-span-2">
-            <Field label="Reason" value={form.reason} onChange={updateField("reason")} placeholder="Dental cleaning" />
+            <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500">Existing {labels.contact.toLowerCase()}</label>
+            <select
+              className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-sm focus:border-gray-950 focus:outline-none"
+              value={selectedContactId}
+              onChange={onSelectContact}
+            >
+              <option value="">New {labels.contact.toLowerCase()} / walk-in</option>
+              {contacts.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}{c.phone ? ` — ${c.phone}` : ""}</option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-gray-400">Pick a saved {labels.contact.toLowerCase()} to auto-fill their name and phone, or leave as "New" for a walk-in.</p>
+          </div>
+          <Field label="Name *" value={form.patient_name} onChange={updateField("patient_name")} placeholder="Jane Doe" />
+          <Field label="Phone (for WhatsApp)" value={form.phone} onChange={updateField("phone")} placeholder="+9198XXXXXXXX" />
+          {!isToken && (
+            <>
+              <Field label="Date & time *" type="datetime-local" value={form.appointment_at} onChange={updateField("appointment_at")} />
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500">Length</label>
+                <select
+                  className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-sm focus:border-gray-950 focus:outline-none"
+                  value={form.duration_min}
+                  onChange={updateField("duration_min")}
+                >
+                  {DURATIONS.map((m) => <option key={m} value={m}>{m} min</option>)}
+                </select>
+              </div>
+            </>
+          )}
+          <div className="sm:col-span-2">
+            <Field label="Reason" value={form.reason} onChange={updateField("reason")} placeholder="e.g. consultation, site visit, table for 4" />
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={!!reRow}
+        onClose={() => setReRow(null)}
+        title={`Reschedule ${labels.booking.toLowerCase()}`}
+        description={reRow ? `${reRow.patient_name} — currently ${fmtWhen(reRow)}` : ""}
+        footer={
+          <div className="flex justify-end gap-3">
+            <Button variant="secondary" onClick={() => setReRow(null)}>Cancel</Button>
+            <Button onClick={submitReschedule} disabled={reSubmitting}>{reSubmitting ? "Saving..." : "Reschedule"}</Button>
+          </div>
+        }
+      >
+        {reError && <div className="mb-4 rounded-2xl border border-red-100 bg-red-50 p-3 text-sm text-red-800">{reError}</div>}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="New date & time *" type="datetime-local" value={reAt} onChange={(e) => setReAt(e.target.value)} />
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500">Length</label>
+            <select
+              className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-sm focus:border-gray-950 focus:outline-none"
+              value={reDur}
+              onChange={(e) => setReDur(e.target.value)}
+            >
+              {DURATIONS.map((m) => <option key={m} value={m}>{m} min</option>)}
+            </select>
           </div>
         </div>
       </Modal>

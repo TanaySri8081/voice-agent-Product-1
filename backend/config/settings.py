@@ -11,6 +11,12 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173")
     # Public URL of the dashboard, used to build password-reset / invite links.
     APP_BASE_URL: str = os.getenv("APP_BASE_URL", "http://localhost:3000")
+
+    # Shared secret the LiveKit voice agent uses to call the internal booking
+    # endpoint (POST /api/calls/agent-book). Set the SAME value in .env so both
+    # the backend and the agent read it. Empty => the endpoint is disabled (401),
+    # so the agent cannot write bookings until this is set.
+    AGENT_INTERNAL_SECRET: str = os.getenv("AGENT_INTERNAL_SECRET", "")
     
     # Database Settings (Supabase Postgres)
     # Two ways to configure it (DATABASE_URL wins if it is set):
@@ -31,6 +37,52 @@ class Settings(BaseSettings):
     JWT_SECRET: str = os.getenv("JWT_SECRET", "super-secret-receptionist-key-change-this-in-production")
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
+
+    # Platform super-admins (comma-separated emails). Users whose login email is
+    # listed here can access /admin (assign plans / custom allowances across all
+    # tenants). Everyone else is 403. Set this in .env to your own email(s).
+    SUPERADMIN_EMAILS: str = os.getenv("SUPERADMIN_EMAILS", "")
+
+    # Monthly call-quota enforcement on inbound calls. OFF by default and
+    # fail-open (any error while checking -> the call is allowed). When ON, calls
+    # beyond a tenant's monthly allowance are answered with QUOTA_EXCEEDED_MESSAGE
+    # and ended.
+    ENFORCE_CALL_QUOTA: bool = os.getenv("ENFORCE_CALL_QUOTA", "false").lower() == "true"
+    QUOTA_EXCEEDED_MESSAGE: str = os.getenv("QUOTA_EXCEEDED_MESSAGE", "Sorry, we are unable to take your call at the moment. Please try again later.")
+
+    # Payments (Razorpay). Self-serve plan upgrades are enabled only when both
+    # KEY_ID and KEY_SECRET are set; otherwise the dashboard shows "Request
+    # upgrade" instead of a pay button. KEY_ID is public (used by checkout.js);
+    # KEY_SECRET and WEBHOOK_SECRET must never reach the browser.
+    RAZORPAY_KEY_ID: str = os.getenv("RAZORPAY_KEY_ID", "")
+    RAZORPAY_KEY_SECRET: str = os.getenv("RAZORPAY_KEY_SECRET", "")
+    RAZORPAY_WEBHOOK_SECRET: str = os.getenv("RAZORPAY_WEBHOOK_SECRET", "")
+
+    @property
+    def payments_enabled(self) -> bool:
+        return bool(self.RAZORPAY_KEY_ID and self.RAZORPAY_KEY_SECRET)
+
+    # WhatsApp (Meta Cloud API) for appointment confirmations + reminders.
+    # Enabled only when both the access token and phone number id are set.
+    # Templates must be pre-approved in Meta Business Manager; each expects 3
+    # body params in order: {{1}}=customer name, {{2}}=business, {{3}}=when.
+    WHATSAPP_ACCESS_TOKEN: str = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
+    WHATSAPP_PHONE_NUMBER_ID: str = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
+    WHATSAPP_API_VERSION: str = os.getenv("WHATSAPP_API_VERSION", "v22.0")
+    # Prepended to 10-digit local numbers when normalising recipients (India=91).
+    WHATSAPP_DEFAULT_COUNTRY_CODE: str = os.getenv("WHATSAPP_DEFAULT_COUNTRY_CODE", "91")
+    # Must match the language of your approved templates (e.g. "en_US" or "hi").
+    WHATSAPP_TEMPLATE_LANG: str = os.getenv("WHATSAPP_TEMPLATE_LANG", "en_US")
+    WHATSAPP_CONFIRM_TEMPLATE: str = os.getenv("WHATSAPP_CONFIRM_TEMPLATE", "appointment_confirmation")
+    WHATSAPP_REMINDER_TEMPLATE: str = os.getenv("WHATSAPP_REMINDER_TEMPLATE", "appointment_reminder")
+    # Send the reminder once the appointment is within this many minutes.
+    WHATSAPP_REMINDER_LEAD_MIN: int = int(os.getenv("WHATSAPP_REMINDER_LEAD_MIN", "120") or "120")
+    # How often the reminder worker checks for due reminders (seconds).
+    WHATSAPP_REMINDER_INTERVAL_SEC: int = int(os.getenv("WHATSAPP_REMINDER_INTERVAL_SEC", "300") or "300")
+
+    @property
+    def whatsapp_enabled(self) -> bool:
+        return bool(self.WHATSAPP_ACCESS_TOKEN and self.WHATSAPP_PHONE_NUMBER_ID)
 
     # Email (SMTP) for password reset + team invites. If SMTP_HOST is empty,
     # links are logged server-side instead of emailed (dev mode).
@@ -68,8 +120,25 @@ class Settings(BaseSettings):
     VOBIZ_USERNAME: str = os.getenv("VOBIZ_USERNAME", "")
     VOBIZ_PASSWORD: str = os.getenv("VOBIZ_PASSWORD", "")
     VOBIZ_OUTBOUND_NUMBER: str = os.getenv("VOBIZ_OUTBOUND_NUMBER", "")
-    DEFAULT_TRANSFER_NUMBER: str = os.getenv("DEFAULT_TRANSFER_NUMBER", "")
-    SYSTEM_PROMPT: str = os.getenv("SYSTEM_PROMPT", "You are a warm, professional AI receptionist answering inbound phone calls for a clinic. Your primary goal is to book appointments for callers. Greet the caller, answer brief questions, and collect what you need to book: the caller's full name, preferred date, preferred time, and reason for the visit. As soon as you have a date and time, call the book_appointment tool to confirm, then read the confirmation back. Use lookup_caller to recognise returning patients. If the caller asks for a human or describes an emergency, use transfer_call. Always speak with the caller in Hindi. Keep every reply short, natural, and under two sentences.")
-    INITIAL_GREETING: str = os.getenv("INITIAL_GREETING", "Greet the caller warmly, introduce yourself as the clinic's AI receptionist, and ask how you can help them book an appointment today.")
+
+    # Vobiz REST API (number provisioning). SEPARATE from the SIP username/
+    # password above: these are the dashboard's "Auth ID" / "Auth Token" and use
+    # HTTP Basic auth. Needed for one-click number provisioning, where a client
+    # claims a number from the account's inventory and it is auto-routed.
+    VOBIZ_AUTH_ID: str = os.getenv("VOBIZ_AUTH_ID", "")
+    VOBIZ_AUTH_TOKEN: str = os.getenv("VOBIZ_AUTH_TOKEN", "")
+    # Inbound trunk whose destination is our LiveKit SIP URI. Vobiz does NOT
+    # auto-route new numbers — each DID must be assigned to this trunk. ONE trunk
+    # serves every number, so this is a single one-time value.
+    VOBIZ_TRUNK_GROUP_ID: str = os.getenv("VOBIZ_TRUNK_GROUP_ID", "")
+
+    @property
+    def number_provisioning_enabled(self) -> bool:
+        """True when the dashboard can claim + route numbers by itself."""
+        return bool(self.VOBIZ_AUTH_ID and self.VOBIZ_AUTH_TOKEN and self.VOBIZ_TRUNK_GROUP_ID)
+    # Business-neutral defaults. Per-tenant prompts (set from an industry
+    # template at sign-up and editable in Settings) override these at call time.
+    SYSTEM_PROMPT: str = os.getenv("SYSTEM_PROMPT", "You are a warm, professional AI receptionist answering inbound phone calls for a business. Your goals are to answer callers' questions using the business information provided, capture their details as a lead, and book an appointment or callback when they want one. Greet the caller, understand what they need, and collect: their full name, preferred date and time, and the reason for their enquiry. As soon as you have a date and time, call the book_appointment tool to confirm, then read the confirmation back. Use lookup_caller to recognise returning contacts. Always speak with the caller in Hindi. Keep every reply short, natural, and under two sentences.")
+    INITIAL_GREETING: str = os.getenv("INITIAL_GREETING", "Greet the caller warmly, introduce yourself as the business's AI assistant, and ask how you can help them today.")
 
 settings = Settings()

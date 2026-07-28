@@ -20,11 +20,14 @@ class PatientResponse(PatientBase):
     created_at: datetime
 
 class AppointmentBase(BaseModel):
-    patient_id: str
     patient_name: str
-    appointment_date: str  # ISO Format or human string
+    appointment_at: Optional[datetime] = None   # structured start (naive local wall-time)
+    duration_min: int = 30
+    phone: Optional[str] = None                  # customer phone for WhatsApp
     reason: Optional[str] = None
+    patient_id: Optional[str] = "manual"
     status: str = "scheduled"  # scheduled, completed, cancelled, rescheduled
+    appointment_date: Optional[str] = None       # display string; derived from appointment_at if omitted
 
 class AppointmentCreate(AppointmentBase):
     pass

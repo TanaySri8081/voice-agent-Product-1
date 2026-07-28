@@ -8,6 +8,7 @@ class UserRegister(BaseModel):
     role: str = Field("doctor", description="doctor, admin, receptionist")
     clinic_name: Optional[str] = None
     did: Optional[str] = None  # Mapping phone number / DID
+    industry: Optional[str] = None  # Vertical key (clinic, real_estate, ...) for the starter template
 
 class UserLogin(BaseModel):
     email: EmailStr

@@ -1,0 +1,9 @@
+# VoxPilot LiveKit voice agent (separate from the FastAPI backend).
+# Install into agent/.venv:  agent\.venv\Scripts\python.exe -m pip install -r agent\requirements.txt
+livekit-agents==1.6.6
+livekit-plugins-deepgram==1.6.6
+livekit-plugins-openai==1.6.6
+livekit-plugins-silero==1.6.6
+livekit-plugins-noise-cancellation>=0.2
+python-dotenv==1.2.2
+httpx>=0.28

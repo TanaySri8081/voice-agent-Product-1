@@ -79,7 +79,7 @@ async def overview(
         "customer": r.caller_name or r.phone or "Unknown",
         "phone": r.phone,
         "direction": r.direction or "inbound",
-        "duration": _fmt_duration(r.duration),
+        "duration": int(r.duration or 0),
         "status": r.status or "unknown",
         "date": r.created_at.isoformat() if r.created_at else None,
     } for r in recent_rows]
@@ -130,3 +130,79 @@ async def live_calls(
         "turns": len(r.transcript or []),
     } for r in rows]
     return api_response(success=True, message="Live calls fetched", data=data)
+
+
+@router.get("/funnel")
+async def funnel(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Conversion funnel over the last 30 days: calls -> answered -> booked,
+    plus leads captured and transfers, with the derived rates."""
+    clinic_id = to_uuid(current_user.get("clinic_id"))
+    if clinic_id is None:
+        return api_response(success=False, message="No clinic associated with user", status_code=400)
+
+    period_days = 30
+    since = datetime.utcnow() - timedelta(days=period_days)
+
+    async def scalar(stmt):
+        return (await db.execute(stmt)).scalar() or 0
+
+    calls = await scalar(select(func.count()).select_from(CallLog).where(
+        CallLog.clinic_id == clinic_id, CallLog.created_at >= since))
+    answered = await scalar(select(func.count()).select_from(CallLog).where(
+        CallLog.clinic_id == clinic_id, CallLog.created_at >= since,
+        CallLog.status.in_(["completed", "transferred", "active"])))
+    transferred = await scalar(select(func.count()).select_from(CallLog).where(
+        CallLog.clinic_id == clinic_id, CallLog.created_at >= since,
+        CallLog.status == "transferred"))
+    appointments = await scalar(select(func.count()).select_from(Appointment).where(
+        Appointment.clinic_id == clinic_id, Appointment.created_at >= since))
+    leads = await scalar(select(func.count()).select_from(Patient).where(
+        Patient.clinic_id == clinic_id, Patient.created_at >= since))
+
+    def rate(n):
+        return round((n / calls) * 100, 1) if calls > 0 else 0.0
+
+    data = {
+        "periodDays": period_days,
+        "calls": calls,
+        "answered": answered,
+        "transferred": transferred,
+        "appointments": appointments,
+        "leads": leads,
+        "answerRate": rate(answered),
+        "conversionRate": rate(appointments),
+        "transferRate": rate(transferred),
+    }
+    return api_response(success=True, message="Funnel fetched", data=data)
+
+
+@router.get("/onboarding")
+async def onboarding(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Setup checklist state for the tenant, derived from existing data."""
+    clinic_id = to_uuid(current_user.get("clinic_id"))
+    if clinic_id is None:
+        return api_response(success=False, message="No clinic associated with user", status_code=400)
+
+    tenant = (await db.execute(select(Tenant).where(Tenant.id == clinic_id))).scalar_one_or_none()
+
+    async def scalar(stmt):
+        return (await db.execute(stmt)).scalar() or 0
+
+    calls = await scalar(select(func.count()).select_from(CallLog).where(CallLog.clinic_id == clinic_id))
+    numbers = await scalar(select(func.count()).select_from(PhoneNumber).where(PhoneNumber.clinic_id == clinic_id))
+
+    steps = {
+        "industry": bool(tenant and tenant.industry),
+        "knowledgeBase": bool(tenant and (tenant.knowledge_base or "").strip()),
+        "phoneNumber": bool(numbers > 0 or (tenant and tenant.did)),
+        "agentConfigured": bool(tenant and (tenant.voice or tenant.language)),
+        "firstCall": calls > 0,
+    }
+    data = {**steps, "complete": all(steps.values())}
+    return api_response(success=True, message="Onboarding state fetched", data=data)

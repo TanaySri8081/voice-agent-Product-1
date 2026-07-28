@@ -15,6 +15,11 @@ router = APIRouter(prefix="/clinics", tags=["Clinic Profile"])
 
 class ClinicSettingsUpdate(BaseModel):
     name: Optional[str] = None
+    industry: Optional[str] = None
+    # "time" (fixed slots) or "token" (daily queue number). The queue counters
+    # themselves are managed only via the /appointments/queue endpoints.
+    booking_mode: Optional[str] = None
+    notify_email: Optional[str] = None
     did: Optional[str] = None
     system_prompt: Optional[str] = None
     initial_greeting: Optional[str] = None
@@ -22,7 +27,20 @@ class ClinicSettingsUpdate(BaseModel):
     voice: Optional[str] = None
     language: Optional[str] = None
     llm_model: Optional[str] = None
-    transfer_number: Optional[str] = None
+    whatsapp_phone_number_id: Optional[str] = None
+    whatsapp_access_token: Optional[str] = None
+    whatsapp_template_lang: Optional[str] = None
+    whatsapp_confirm_template: Optional[str] = None
+    whatsapp_reminder_template: Optional[str] = None
+
+
+def _mask_secrets(data: dict) -> dict:
+    """Never return the raw WhatsApp access token; expose only whether it's set."""
+    if data is None:
+        return data
+    data["whatsapp_access_token_set"] = bool(data.get("whatsapp_access_token"))
+    data["whatsapp_access_token"] = ""
+    return data
 
 
 @router.get("/settings")
@@ -42,7 +60,7 @@ async def get_settings(
     return api_response(
         success=True,
         message="Clinic settings fetched successfully",
-        data=serialize_model(tenant),
+        data=_mask_secrets(serialize_model(tenant)),
     )
 
 
@@ -66,11 +84,15 @@ async def update_settings(
         return api_response(success=False, message="Clinic settings not found", status_code=404)
 
     for key, value in update_data.items():
+        # Don't wipe the stored WhatsApp token when the field is left blank
+        # (the dashboard sends blank to mean "keep the existing token").
+        if key == "whatsapp_access_token" and not (value or "").strip():
+            continue
         setattr(tenant, key, value)
     await db.commit()
 
     return api_response(
         success=True,
         message="Clinic settings updated successfully",
-        data=serialize_model(tenant),
+        data=_mask_secrets(serialize_model(tenant)),
     )

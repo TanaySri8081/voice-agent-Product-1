@@ -50,7 +50,7 @@ export const useAuthStore = create((set) => ({
     }
   },
 
-  register: async (email, password, name, clinicName, did) => {
+  register: async (email, password, name, clinicName, did, industry) => {
     set({ loading: true, error: null });
     try {
       const response = await api.post(`/auth/register`, {
@@ -59,7 +59,8 @@ export const useAuthStore = create((set) => ({
         name,
         clinic_name: clinicName,
         role: "doctor",
-        did
+        did,
+        industry
       });
       
       const { success, data, message } = response.data;

@@ -1,11 +1,12 @@
 import { Search, UserPlus } from "lucide-react";
 import { useMemo, useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import api from "../lib/api";
+import { useLabels } from "../store/clinicStore";
 import DataTable from "../components/DataTable";
 import Modal from "../components/Modal";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
-import { contacts as mockContacts } from "../data/mockData";
 
 const emptyForm = { name: "", phone: "", email: "", age: "", gender: "", notes: "" };
 
@@ -31,13 +32,15 @@ function formatPatient(p) {
     name: p.name,
     phone: p.phone,
     email: p.email || "N/A",
-    company: p.gender ? `${p.gender}, Age ${p.age || "N/A"}` : "Patient",
+    company: p.gender ? `${p.gender}, Age ${p.age || "N/A"}` : "Contact",
     lastContacted: p.follow_up_notes || "None",
     status: p.history && p.history.length > 0 ? "Returning" : "New",
   };
 }
 
 export default function Contacts() {
+  const labels = useLabels();
+  const navigate = useNavigate();
   const [list, setList] = useState([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
@@ -58,11 +61,11 @@ export default function Contacts() {
         setList((res.data.data || []).map(formatPatient));
         setLive(true);
       } else {
-        setList(mockContacts);
+        setList([]);
         setLive(false);
       }
     } catch {
-      setList(mockContacts);
+      setList([]);
       setLive(false);
     } finally {
       setLoading(false);
@@ -122,12 +125,19 @@ export default function Contacts() {
     { key: "name", header: "Name" },
     { key: "phone", header: "Phone" },
     { key: "email", header: "Email" },
-    { key: "company", header: "Demographics / Context" },
-    { key: "lastContacted", header: "Follow-up / Notes" },
+    { key: "company", header: "Details" },
+    { key: "lastContacted", header: "Notes" },
     {
       key: "status",
       header: "Status",
       render: (row) => <Badge tone={row.status === "Returning" ? "success" : "neutral"}>{row.status}</Badge>,
+    },
+    {
+      key: "actions",
+      header: "",
+      render: (row) => (
+        <Button variant="secondary" size="sm" onClick={() => navigate(`/contacts/${row.id}`)}>View</Button>
+      ),
     },
   ];
 
@@ -135,11 +145,11 @@ export default function Contacts() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-gray-950">Contacts</h1>
-          <p className="mt-2 text-sm text-gray-500">Add and manage patient records the AI receptionist uses to recognise inbound callers.</p>
+          <h1 className="text-3xl font-semibold tracking-tight text-gray-950">{labels.contacts}</h1>
+          <p className="mt-2 text-sm text-gray-500">Add and manage {labels.contact.toLowerCase()} records the AI receptionist uses to recognise inbound callers.</p>
         </div>
         <Button onClick={() => { setFormError(""); setForm(emptyForm); setOpen(true); }}>
-          <UserPlus className="h-4 w-4" /> Add contact
+          <UserPlus className="h-4 w-4" /> Add {labels.contact.toLowerCase()}
         </Button>
       </div>
 
@@ -159,7 +169,7 @@ export default function Contacts() {
       )}
 
       {!loading && !live && (
-        <p className="text-xs text-gray-400">Showing sample data, couldn't reach the backend. Adding requires a signed-in session and a running API.</p>
+        <p className="text-xs text-gray-400">Couldn't reach the backend. Sign in and ensure the API is running to see and manage {labels.contacts.toLowerCase()}.</p>
       )}
 
       <div className="panel flex flex-col gap-3 rounded-3xl p-4 md:flex-row">
@@ -167,20 +177,20 @@ export default function Contacts() {
           <Search className="h-4 w-4 text-gray-400" />
           <input
             className="w-full border-0 outline-none"
-            placeholder="Search contacts..."
+            placeholder={`Search ${labels.contacts.toLowerCase()}...`}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
         </label>
       </div>
 
-      <DataTable columns={columns} rows={filtered} loading={loading} emptyTitle="No contacts yet, add your first one" />
+      <DataTable columns={columns} rows={filtered} loading={loading} emptyTitle={`No ${labels.contacts.toLowerCase()} yet, add your first one`} />
 
       <Modal
         open={open}
         onClose={() => setOpen(false)}
-        title="Add contact"
-        description="Create a patient record. Name and phone are required."
+        title={`Add ${labels.contact.toLowerCase()}`}
+        description={`Create a ${labels.contact.toLowerCase()} record. Name and phone are required.`}
         footer={
           <div className="flex justify-end gap-3">
             <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>

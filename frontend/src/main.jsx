@@ -3,27 +3,27 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import AppLayout from "./components/AppLayout";
 import ProtectedRoute from "./components/ProtectedRoute";
+import SuperadminRoute from "./components/SuperadminRoute";
+import ErrorBoundary from "./components/ErrorBoundary";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import Account from "./pages/Account";
-import Team from "./pages/Team";
-import Analytics from "./pages/Analytics";
+import Admin from "./pages/Admin";
 import Appointments from "./pages/Appointments";
-import Agents from "./pages/Agents";
 import Billing from "./pages/Billing";
-import CallLogs from "./pages/CallLogs";
+import Calls from "./pages/Calls";
 import Contacts from "./pages/Contacts";
+import ContactDetail from "./pages/ContactDetail";
 import Dashboard from "./pages/Dashboard";
-import KnowledgeBase from "./pages/KnowledgeBase";
-import LiveCalls from "./pages/LiveCalls";
-import PhoneNumbers from "./pages/PhoneNumbers";
-import Settings from "./pages/Settings";
+import Messages from "./pages/Messages";
+import Setup from "./pages/Setup";
 import "./styles.css";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
+    <ErrorBoundary>
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
@@ -38,18 +38,31 @@ ReactDOM.createRoot(document.getElementById("root")).render(
                 <Route element={<AppLayout />}>
                   <Route index element={<Navigate to="/dashboard" replace />} />
                   <Route path="/dashboard" element={<Dashboard />} />
-                  <Route path="/agents" element={<Agents />} />
+                  <Route path="/calls" element={<Calls />} />
                   <Route path="/contacts" element={<Contacts />} />
-                  <Route path="/calls/live" element={<LiveCalls />} />
-                  <Route path="/call-logs" element={<CallLogs />} />
+                  <Route path="/contacts/:id" element={<ContactDetail />} />
                   <Route path="/appointments" element={<Appointments />} />
-                  <Route path="/analytics" element={<Analytics />} />
-                  <Route path="/knowledge-base" element={<KnowledgeBase />} />
-                  <Route path="/phone-numbers" element={<PhoneNumbers />} />
+                  <Route path="/messages" element={<Messages />} />
+                  <Route path="/setup" element={<Setup />} />
                   <Route path="/billing" element={<Billing />} />
-                  <Route path="/settings" element={<Settings />} />
                   <Route path="/account" element={<Account />} />
-                  <Route path="/team" element={<Team />} />
+                  <Route
+                    path="/admin"
+                    element={
+                      <SuperadminRoute>
+                        <Admin />
+                      </SuperadminRoute>
+                    }
+                  />
+
+                  {/* Redirects from the old (pre-consolidation) routes */}
+                  <Route path="/agents" element={<Navigate to="/setup" replace />} />
+                  <Route path="/settings" element={<Navigate to="/setup" replace />} />
+                  <Route path="/knowledge-base" element={<Navigate to="/setup" replace />} />
+                  <Route path="/phone-numbers" element={<Navigate to="/setup" replace />} />
+                  <Route path="/calls/live" element={<Navigate to="/calls" replace />} />
+                  <Route path="/call-logs" element={<Navigate to="/calls" replace />} />
+                  <Route path="/analytics" element={<Navigate to="/dashboard" replace />} />
                 </Route>
               </Routes>
             </ProtectedRoute>
@@ -57,5 +70,6 @@ ReactDOM.createRoot(document.getElementById("root")).render(
         />
       </Routes>
     </BrowserRouter>
+    </ErrorBoundary>
   </React.StrictMode>,
 );

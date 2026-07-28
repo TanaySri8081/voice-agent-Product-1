@@ -1,13 +1,17 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Activity, CalendarCheck, PhoneCall, Timer, Users } from "lucide-react";
+import { Activity, CalendarCheck, CheckCircle2, Circle, PhoneCall, PhoneForwarded, Target, Timer, TrendingUp, Users } from "lucide-react";
 import api from "../lib/api";
+import { useLabels } from "../store/clinicStore";
 import ChartCard from "../components/ChartCard";
 import DataTable from "../components/DataTable";
 import StatCard from "../components/StatCard";
 import { Badge } from "../components/ui/Badge";
 
 const COLORS = ["#111827", "#6b7280", "#d1d5db", "#f59e0b", "#10b981", "#ef4444"];
+const STAGE_COLORS = ["bg-gray-950", "bg-gray-600", "bg-emerald-500"];
+const nf = new Intl.NumberFormat("en-IN");
 
 const fmtDuration = (s) => `${Math.floor((s || 0) / 60)}m ${(s || 0) % 60}s`;
 const dayLabel = (iso) => {
@@ -26,15 +30,30 @@ const toneFor = (status) => {
 };
 
 export default function Dashboard() {
+  const labels = useLabels();
   const [data, setData] = useState(null);
+  const [funnel, setFunnel] = useState(null);
+  const [onboarding, setOnboarding] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api.get("/stats/overview")
-      .then((res) => { if (res.data?.success) setData(res.data.data); })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    Promise.all([
+      api.get("/stats/overview").then((res) => { if (res.data?.success) setData(res.data.data); }).catch(() => {}),
+      api.get("/stats/funnel").then((res) => { if (res.data?.success) setFunnel(res.data.data); }).catch(() => {}),
+      api.get("/stats/onboarding").then((res) => { if (res.data?.success) setOnboarding(res.data.data); }).catch(() => {}),
+    ]).finally(() => setLoading(false));
   }, []);
+
+  const ob = onboarding || {};
+  const setupSteps = [
+    { key: "industry", label: "Choose your industry", to: "/setup", done: ob.industry },
+    { key: "knowledgeBase", label: "Add your business knowledge base", to: "/setup", done: ob.knowledgeBase },
+    { key: "phoneNumber", label: "Connect your phone number", to: "/setup", done: ob.phoneNumber },
+    { key: "agentConfigured", label: "Set your agent's voice & language", to: "/setup", done: ob.agentConfigured },
+    { key: "firstCall", label: "Receive your first call", to: null, done: ob.firstCall },
+  ];
+  const showChecklist = onboarding && !ob.complete;
+  const doneCount = setupSteps.filter((s) => s.done).length;
 
   const totals = data?.totals || {};
   const calls = data?.calls || {};
@@ -42,11 +61,19 @@ export default function Dashboard() {
   const outcomes = data?.outcomes || [];
   const recent = data?.recent || [];
 
+  const f = funnel || {};
+  const stages = [
+    { label: "Calls received", value: f.calls ?? 0 },
+    { label: "Answered", value: f.answered ?? 0 },
+    { label: `${labels.bookings} booked`, value: f.appointments ?? 0 },
+  ];
+  const maxStage = Math.max(f.calls ?? 0, 1);
+
   const columns = [
     { key: "customer", header: "Caller" },
     { key: "phone", header: "Phone" },
     { key: "direction", header: "Direction", render: (row) => <span className="capitalize">{row.direction}</span> },
-    { key: "duration", header: "Duration" },
+    { key: "duration", header: "Duration", render: (row) => fmtDuration(row.duration) },
     { key: "status", header: "Status", render: (row) => <Badge tone={toneFor(row.status)}>{row.status}</Badge> },
     { key: "date", header: "When", render: (row) => (row.date ? new Date(row.date).toLocaleString() : "—") },
   ];
@@ -59,11 +86,39 @@ export default function Dashboard() {
         <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-500">A live view of calls, appointments, and your AI receptionist's activity.</p>
       </div>
 
+      {showChecklist && (
+        <section className="panel rounded-3xl border border-gray-100 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-950">Finish setting up</h2>
+              <p className="mt-1 text-sm text-gray-500">Complete these steps to get your AI receptionist live.</p>
+            </div>
+            <span className="text-sm font-medium text-gray-500">{doneCount}/{setupSteps.length}</span>
+          </div>
+          <ul className="mt-4 space-y-2">
+            {setupSteps.map((s) => (
+              <li key={s.key} className="flex items-center gap-3">
+                {s.done ? (
+                  <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+                ) : (
+                  <Circle className="h-5 w-5 text-gray-300" />
+                )}
+                {s.done || !s.to ? (
+                  <span className={`text-sm ${s.done ? "text-gray-400 line-through" : "text-gray-700"}`}>{s.label}</span>
+                ) : (
+                  <Link to={s.to} className="text-sm font-medium text-gray-900 hover:underline">{s.label}</Link>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <StatCard title="Total Calls" value={loading ? "…" : (totals.calls ?? 0)} icon={PhoneCall} />
         <StatCard title="Calls Today" value={loading ? "…" : (calls.today ?? 0)} icon={Activity} tone="light" />
-        <StatCard title="Appointments" value={loading ? "…" : (totals.appointments ?? 0)} icon={CalendarCheck} tone="light" />
-        <StatCard title="Contacts" value={loading ? "…" : (totals.contacts ?? 0)} icon={Users} tone="light" />
+        <StatCard title={labels.bookings} value={loading ? "…" : (totals.appointments ?? 0)} icon={CalendarCheck} tone="light" />
+        <StatCard title={labels.contacts} value={loading ? "…" : (totals.contacts ?? 0)} icon={Users} tone="light" />
         <StatCard title="Avg Duration" value={loading ? "…" : fmtDuration(calls.avgDurationSec)} icon={Timer} tone="light" />
       </section>
 
@@ -105,6 +160,41 @@ export default function Dashboard() {
             </div>
           </div>
         </ChartCard>
+      </section>
+
+      {/* Conversion funnel (last 30 days) */}
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold text-gray-950">Conversion funnel</h2>
+          <p className="text-sm text-gray-500">Last {f.periodDays ?? 30} days</p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <StatCard title="Answer rate" value={loading ? "…" : `${f.answerRate ?? 0}%`} icon={Target} tone="light" />
+          <StatCard title="Booking conversion" value={loading ? "…" : `${f.conversionRate ?? 0}%`} icon={TrendingUp} tone="light" />
+          <StatCard title="Transfer rate" value={loading ? "…" : `${f.transferRate ?? 0}%`} icon={PhoneForwarded} tone="light" />
+        </div>
+        <div className="panel rounded-3xl p-6">
+          {(f.calls ?? 0) === 0 ? (
+            <div className="grid place-items-center py-8 text-sm text-gray-400">No call data in this period yet</div>
+          ) : (
+            <div className="space-y-4">
+              {stages.map((s, i) => (
+                <div key={s.label}>
+                  <div className="mb-1 flex items-center justify-between text-sm">
+                    <span className="text-gray-600">{s.label}</span>
+                    <span className="font-semibold text-gray-950">{nf.format(s.value)}</span>
+                  </div>
+                  <div className="h-3 w-full overflow-hidden rounded-full bg-gray-100">
+                    <div className={`h-full rounded-full ${STAGE_COLORS[i]}`} style={{ width: `${Math.max((s.value / maxStage) * 100, s.value > 0 ? 4 : 0)}%` }} />
+                  </div>
+                </div>
+              ))}
+              <p className="pt-1 text-xs text-gray-400">
+                {nf.format(f.leads ?? 0)} {labels.contacts.toLowerCase()} captured · {nf.format(f.transferred ?? 0)} transferred to a human
+              </p>
+            </div>
+          )}
+        </div>
       </section>
 
       <section className="space-y-4">

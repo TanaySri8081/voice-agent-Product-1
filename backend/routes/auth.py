@@ -21,6 +21,7 @@ from backend.services.auth_service import (
     hash_token,
 )
 from backend.services.email import send_email
+from backend.services.industry_templates import get_template
 from backend.models import User, Tenant, PasswordResetToken, PhoneNumber
 from backend.schemas.auth import UserRegister, UserLogin
 from backend.utils.helpers import api_response, serialize_model, to_uuid
@@ -67,6 +68,22 @@ def require_roles(allowed_roles: list):
     return role_checker
 
 
+def is_superadmin(email: str) -> bool:
+    """True if the email is in the platform SUPERADMIN_EMAILS allowlist."""
+    allow = [e.strip().lower() for e in (settings.SUPERADMIN_EMAILS or "").split(",") if e.strip()]
+    return bool(email) and email.strip().lower() in allow
+
+
+async def require_superadmin(current_user: dict = Depends(get_current_user)):
+    """Dependency that restricts a route to platform super-admins."""
+    if not is_superadmin(current_user.get("email", "")):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Super admin access required",
+        )
+    return current_user
+
+
 @router.post("/register")
 @limiter.limit("5/minute")
 async def register(request: Request, payload: UserRegister, db: AsyncSession = Depends(get_db)):
@@ -75,12 +92,23 @@ async def register(request: Request, payload: UserRegister, db: AsyncSession = D
     if existing.scalar_one_or_none():
         return api_response(success=False, message="Email already registered", status_code=400)
 
-    # Create Tenant (Clinic) first, when applicable
+    # Create Tenant (the client's business) first, when applicable.
     clinic_id = None
     if payload.role == "doctor" or payload.clinic_name:
-        clinic_name = payload.clinic_name or f"{payload.name}'s Clinic"
+        clinic_name = payload.clinic_name or f"{payload.name}'s Business"
         did_val = payload.did.strip() if payload.did else None
-        tenant = Tenant(name=clinic_name, subscription="free", did=did_val or None)
+        # Seed the agent with a vertical-specific starter prompt/greeting from
+        # the chosen industry template (falls back to the generic defaults when
+        # no/unknown industry is given). The client can edit these in Settings.
+        tmpl = get_template(payload.industry)
+        tenant = Tenant(
+            name=clinic_name,
+            subscription="free",
+            did=did_val or None,
+            industry=(payload.industry.strip().lower() if tmpl else None),
+            system_prompt=(tmpl["system_prompt"] if tmpl else None),
+            initial_greeting=(tmpl["initial_greeting"] if tmpl else None),
+        )
         db.add(tenant)
         try:
             await db.flush()  # assigns tenant.id
@@ -121,9 +149,12 @@ async def register(request: Request, payload: UserRegister, db: AsyncSession = D
     response_data = {
         "access_token": access_token,
         "token_type": "bearer",
+        "id": user_id,
+        "email": payload.email,
         "role": payload.role,
         "name": payload.name,
         "clinic_id": clinic_id_str,
+        "is_superadmin": is_superadmin(payload.email),
     }
     return api_response(success=True, message="Registration successful", data=response_data)
 
@@ -146,9 +177,12 @@ async def login(request: Request, payload: UserLogin, db: AsyncSession = Depends
     response_data = {
         "access_token": access_token,
         "token_type": "bearer",
+        "id": str(user.id),
+        "email": user.email,
         "role": user.role,
         "name": user.name,
         "clinic_id": clinic_id_str,
+        "is_superadmin": is_superadmin(user.email),
     }
     return api_response(success=True, message="Login successful", data=response_data)
 
@@ -161,6 +195,7 @@ async def get_me(current_user: dict = Depends(get_current_user)):
         "name": current_user["name"],
         "role": current_user["role"],
         "clinic_id": current_user.get("clinic_id"),
+        "is_superadmin": is_superadmin(current_user["email"]),
     }
     return api_response(success=True, message="Current user fetched successfully", data=user_response)
 
