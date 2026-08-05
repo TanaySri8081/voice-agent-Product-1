@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import AppLayout from "./components/AppLayout";
 import ProtectedRoute from "./components/ProtectedRoute";
 import SuperadminRoute from "./components/SuperadminRoute";
+import StaffRoute from "./components/StaffRoute";
 import ErrorBoundary from "./components/ErrorBoundary";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
@@ -43,8 +44,22 @@ ReactDOM.createRoot(document.getElementById("root")).render(
                   <Route path="/contacts/:id" element={<ContactDetail />} />
                   <Route path="/appointments" element={<Appointments />} />
                   <Route path="/messages" element={<Messages />} />
-                  <Route path="/setup" element={<Setup />} />
-                  <Route path="/billing" element={<Billing />} />
+                  <Route
+                    path="/setup"
+                    element={
+                      <StaffRoute>
+                        <Setup />
+                      </StaffRoute>
+                    }
+                  />
+                  <Route
+                    path="/billing"
+                    element={
+                      <StaffRoute>
+                        <Billing />
+                      </StaffRoute>
+                    }
+                  />
                   <Route path="/account" element={<Account />} />
                   <Route
                     path="/admin"

@@ -68,6 +68,21 @@ def require_roles(allowed_roles: list):
     return role_checker
 
 
+async def require_non_staff(current_user: dict = Depends(get_current_user)):
+    """Dependency that blocks staff-role users from write operations.
+
+    Staff can read but cannot create, edit, or delete patients.
+    Apply this to any patient write route instead of (or alongside) the
+    regular get_current_user dependency.
+    """
+    if current_user.get("role") == "staff":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Staff accounts are read-only and cannot perform this action",
+        )
+    return current_user
+
+
 def is_superadmin(email: str) -> bool:
     """True if the email is in the platform SUPERADMIN_EMAILS allowlist."""
     allow = [e.strip().lower() for e in (settings.SUPERADMIN_EMAILS or "").split(",") if e.strip()]
@@ -289,3 +304,56 @@ async def reset_password(request: Request, payload: ResetPassword, db: AsyncSess
     row.used_at = datetime.utcnow()
     await db.commit()
     return api_response(success=True, message="Password set successfully. You can now sign in.")
+
+
+class StaffCreate(BaseModel):
+    name: str = Field(..., min_length=1)
+    email: EmailStr
+    password: str = Field(..., min_length=6)
+
+
+@router.post("/staff")
+async def create_staff(
+    payload: StaffCreate,
+    current_user: dict = Depends(require_roles(["doctor"])),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a staff account scoped to the calling doctor's clinic.
+
+    Only users with role "doctor" may call this endpoint. The created user
+    inherits the same clinic_id and is assigned role "staff", which grants
+    read-only access to patient data and hides billing/setup nav items.
+    """
+    clinic_id = to_uuid(current_user.get("clinic_id"))
+    if clinic_id is None:
+        return api_response(success=False, message="No clinic associated with your account", status_code=400)
+
+    existing = (await db.execute(select(User).where(User.email == payload.email))).scalar_one_or_none()
+    if existing:
+        return api_response(success=False, message="Email already registered", status_code=400)
+
+    staff = User(
+        email=payload.email,
+        password_hash=get_password_hash(payload.password),
+        name=payload.name.strip(),
+        role="staff",
+        clinic_id=clinic_id,
+    )
+    db.add(staff)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        return api_response(success=False, message="Email already registered", status_code=400)
+
+    return api_response(
+        success=True,
+        message=f"Staff account created for {staff.name}",
+        data={
+            "id": str(staff.id),
+            "email": staff.email,
+            "name": staff.name,
+            "role": staff.role,
+            "clinic_id": str(clinic_id),
+        },
+    )

@@ -3,6 +3,7 @@ import { useMemo, useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../lib/api";
 import { useLabels } from "../store/clinicStore";
+import { useAuthStore } from "../store/authStore";
 import DataTable from "../components/DataTable";
 import Modal from "../components/Modal";
 import { Badge } from "../components/ui/Badge";
@@ -35,12 +36,15 @@ function formatPatient(p) {
     company: p.gender ? `${p.gender}, Age ${p.age || "N/A"}` : "Contact",
     lastContacted: p.follow_up_notes || "None",
     status: p.history && p.history.length > 0 ? "Returning" : "New",
+    source: p.source || "agent",
   };
 }
 
 export default function Contacts() {
   const labels = useLabels();
   const navigate = useNavigate();
+  const user = useAuthStore((state) => state.user);
+  const isStaff = user?.role === "staff";
   const [list, setList] = useState([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
@@ -128,6 +132,15 @@ export default function Contacts() {
     { key: "company", header: "Details" },
     { key: "lastContacted", header: "Notes" },
     {
+      key: "source",
+      header: "Source",
+      render: (row) => (
+        <Badge tone={row.source === "manual" ? "neutral" : "dark"}>
+          {row.source === "manual" ? "Manual" : "Agent"}
+        </Badge>
+      ),
+    },
+    {
       key: "status",
       header: "Status",
       render: (row) => <Badge tone={row.status === "Returning" ? "success" : "neutral"}>{row.status}</Badge>,
@@ -148,9 +161,11 @@ export default function Contacts() {
           <h1 className="text-3xl font-semibold tracking-tight text-gray-950">{labels.contacts}</h1>
           <p className="mt-2 text-sm text-gray-500">Add and manage {labels.contact.toLowerCase()} records the AI receptionist uses to recognise inbound callers.</p>
         </div>
-        <Button onClick={() => { setFormError(""); setForm(emptyForm); setOpen(true); }}>
-          <UserPlus className="h-4 w-4" /> Add {labels.contact.toLowerCase()}
-        </Button>
+        {!isStaff && (
+          <Button onClick={() => { setFormError(""); setForm(emptyForm); setOpen(true); }}>
+            <UserPlus className="h-4 w-4" /> Add {labels.contact.toLowerCase()}
+          </Button>
+        )}
       </div>
 
       {banner && (
@@ -186,30 +201,32 @@ export default function Contacts() {
 
       <DataTable columns={columns} rows={filtered} loading={loading} emptyTitle={`No ${labels.contacts.toLowerCase()} yet, add your first one`} />
 
-      <Modal
-        open={open}
-        onClose={() => setOpen(false)}
-        title={`Add ${labels.contact.toLowerCase()}`}
-        description={`Create a ${labels.contact.toLowerCase()} record. Name and phone are required.`}
-        footer={
-          <div className="flex justify-end gap-3">
-            <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={submitContact} disabled={submitting}>{submitting ? "Saving..." : "Save contact"}</Button>
+      {!isStaff && (
+        <Modal
+          open={open}
+          onClose={() => setOpen(false)}
+          title={`Add ${labels.contact.toLowerCase()}`}
+          description={`Create a ${labels.contact.toLowerCase()} record. Name and phone are required.`}
+          footer={
+            <div className="flex justify-end gap-3">
+              <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
+              <Button onClick={submitContact} disabled={submitting}>{submitting ? "Saving..." : "Save contact"}</Button>
+            </div>
+          }
+        >
+          {formError && (
+            <div className="mb-4 rounded-2xl border border-red-100 bg-red-50 p-3 text-sm text-red-800">{formError}</div>
+          )}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Name *" value={form.name} onChange={updateField("name")} placeholder="Jane Doe" />
+            <Field label="Phone *" value={form.phone} onChange={updateField("phone")} placeholder="+91XXXXXXXXXX" />
+            <Field label="Email" type="email" value={form.email} onChange={updateField("email")} placeholder="Email address (optional)" />
+            <Field label="Age" type="number" value={form.age} onChange={updateField("age")} placeholder="35" />
+            <Field label="Gender" value={form.gender} onChange={updateField("gender")} placeholder="Female / Male / Other" />
+            <Field label="Follow-up notes" value={form.notes} onChange={updateField("notes")} placeholder="Prefers morning calls" />
           </div>
-        }
-      >
-        {formError && (
-          <div className="mb-4 rounded-2xl border border-red-100 bg-red-50 p-3 text-sm text-red-800">{formError}</div>
-        )}
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Name *" value={form.name} onChange={updateField("name")} placeholder="Jane Doe" />
-          <Field label="Phone *" value={form.phone} onChange={updateField("phone")} placeholder="+91XXXXXXXXXX" />
-          <Field label="Email" type="email" value={form.email} onChange={updateField("email")} placeholder="Email address (optional)" />
-          <Field label="Age" type="number" value={form.age} onChange={updateField("age")} placeholder="35" />
-          <Field label="Gender" value={form.gender} onChange={updateField("gender")} placeholder="Female / Male / Other" />
-          <Field label="Follow-up notes" value={form.notes} onChange={updateField("notes")} placeholder="Prefers morning calls" />
-        </div>
-      </Modal>
+        </Modal>
+      )}
     </div>
   );
 }
