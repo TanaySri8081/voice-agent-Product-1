@@ -34,7 +34,7 @@ async def list_patients(
 @router.post("/")
 async def create_patient(
     payload: PatientCreate,
-    current_user: dict = Depends(require_non_staff),
+    current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     clinic_id = to_uuid(current_user.get("clinic_id"))
